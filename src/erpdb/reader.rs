@@ -26,7 +26,7 @@ use crate::erpdb::werka_suppliers::read_werka_suppliers;
 
 #[derive(Clone)]
 pub struct DirectDbReader {
-    pool: MySqlPool,
+    pub(crate) pool: MySqlPool,
     default_warehouse: String,
 }
 

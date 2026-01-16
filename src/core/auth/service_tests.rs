@@ -17,6 +17,7 @@ fn config() -> AppConfig {
         erp_url: String::new(),
         erp_api_key: String::new(),
         erp_api_secret: String::new(),
+        default_target_warehouse: String::new(),
         erp_timeout: std::time::Duration::from_secs(15),
         session_store_path: "data/mobile_sessions.json".into(),
         admin_supplier_store_path: "data/mobile_admin_suppliers.json".into(),

@@ -1,16 +1,19 @@
 use axum::Json;
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::extract::{Query, State};
-use axum::http::{HeaderMap, HeaderValue, Response, StatusCode, header};
-use serde::Deserialize;
+use axum::http::{HeaderMap, HeaderValue, Method, Response, StatusCode, header};
+use serde::{Deserialize, Serialize};
 use time::{Date, Month};
 
 use crate::app::AppState;
 use crate::core::auth::models::{Principal, PrincipalRole};
 use crate::core::werka::models::{
     CustomerDirectoryEntry, CustomerItemOption, DispatchRecord, SupplierDirectoryEntry,
-    SupplierItem, WerkaArchiveResponse, WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry,
+    SupplierItem, WerkaArchiveResponse, WerkaCustomerIssueCreateInput,
+    WerkaCustomerIssueCreateRequest, WerkaCustomerIssueRecord, WerkaCustomerIssueSource,
+    WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry,
 };
+use crate::core::werka::ports::WerkaPortError;
 use crate::http::archive_pdf::build_archive_pdf;
 use crate::http::handlers::auth::{ErrorResponse, bearer_token};
 
@@ -54,6 +57,79 @@ pub struct CustomerItemsQuery {
     q: Option<String>,
     limit: Option<String>,
     offset: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct IssueErrorResponse {
+    pub error: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<&'static str>,
+}
+
+pub async fn customer_issue_create(
+    State(state): State<AppState>,
+    method: Method,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<WerkaCustomerIssueRecord>, (StatusCode, Json<IssueErrorResponse>)> {
+    if method != Method::POST {
+        return Err((
+            StatusCode::METHOD_NOT_ALLOWED,
+            Json(IssueErrorResponse {
+                error: "method not allowed",
+                error_code: None,
+            }),
+        ));
+    }
+    let principal = authorize(&state, &headers)
+        .await
+        .map_err(issue_auth_error)?;
+    require_werka(&principal).map_err(issue_auth_error)?;
+
+    let request: WerkaCustomerIssueCreateRequest = serde_json::from_slice(&body).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(IssueErrorResponse {
+                error: "invalid json",
+                error_code: None,
+            }),
+        )
+    })?;
+
+    match state
+        .werka
+        .create_customer_issue(WerkaCustomerIssueCreateInput {
+            customer_ref: request.customer_ref,
+            item_code: request.item_code,
+            qty: request.qty,
+            source: WerkaCustomerIssueSource {
+                barcode: request.source_barcode,
+                stock_entry_name: request.source_stock_entry,
+                line_index: request.source_line_index,
+            },
+        })
+        .await
+    {
+        Ok(Some(record)) => Ok(Json(record)),
+        Ok(None) | Err(WerkaPortError::WriteFailed(_)) | Err(WerkaPortError::LookupFailed) => {
+            Err(customer_issue_create_failed())
+        }
+        Err(WerkaPortError::InsufficientStock) => Err((
+            StatusCode::CONFLICT,
+            Json(IssueErrorResponse {
+                error: "insufficient stock",
+                error_code: Some("insufficient_stock"),
+            }),
+        )),
+        Err(WerkaPortError::DuplicateCustomerIssueSource) => Err((
+            StatusCode::CONFLICT,
+            Json(IssueErrorResponse {
+                error: "duplicate customer issue source",
+                error_code: Some("duplicate_customer_issue_source"),
+            }),
+        )),
+        Err(_) => Err(customer_issue_create_failed()),
+    }
 }
 
 pub async fn suppliers(
@@ -368,6 +444,28 @@ fn unauthorized() -> (StatusCode, Json<ErrorResponse>) {
         StatusCode::UNAUTHORIZED,
         Json(ErrorResponse {
             error: "unauthorized",
+        }),
+    )
+}
+
+fn issue_auth_error(
+    error: (StatusCode, Json<ErrorResponse>),
+) -> (StatusCode, Json<IssueErrorResponse>) {
+    (
+        error.0,
+        Json(IssueErrorResponse {
+            error: error.1.error,
+            error_code: None,
+        }),
+    )
+}
+
+fn customer_issue_create_failed() -> (StatusCode, Json<IssueErrorResponse>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(IssueErrorResponse {
+            error: "werka customer issue create failed",
+            error_code: None,
         }),
     )
 }

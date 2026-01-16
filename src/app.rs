@@ -29,34 +29,29 @@ impl AppState {
         );
 
         if config.erp_configured() {
-            auth = auth.with_supplier_dependencies(
-                Arc::new(ErpnextClient::new(
+            let erp_client = Arc::new(
+                ErpnextClient::new(
                     config.erp_url.clone(),
                     config.erp_api_key.clone(),
                     config.erp_api_secret.clone(),
                     config.erp_timeout,
-                )),
+                )
+                .with_default_warehouse(config.default_target_warehouse.clone()),
+            );
+            auth = auth.with_supplier_dependencies(
+                erp_client.clone(),
                 Arc::new(AdminSupplierStateStore::new(
                     config.admin_supplier_store_path.clone(),
                 )),
             );
             auth = auth.with_customer_dependencies(
-                Arc::new(ErpnextClient::new(
-                    config.erp_url.clone(),
-                    config.erp_api_key.clone(),
-                    config.erp_api_secret.clone(),
-                    config.erp_timeout,
-                )),
+                erp_client.clone(),
                 Arc::new(AdminSupplierStateStore::new(
                     config.admin_supplier_store_path.clone(),
                 )),
             );
-            profiles = profiles.with_erp_lookup(Arc::new(ErpnextClient::new(
-                config.erp_url.clone(),
-                config.erp_api_key.clone(),
-                config.erp_api_secret.clone(),
-                config.erp_timeout,
-            )));
+            profiles = profiles.with_erp_lookup(erp_client.clone());
+            werka = werka.with_customer_issue_writer(erp_client);
         }
         match config.direct_db_config() {
             Ok(Some(db_config)) => {
@@ -66,7 +61,10 @@ impl AppState {
                     database = %db_config.name,
                     "direct DB read enabled for Werka home"
                 );
-                werka = werka.with_lookup(Arc::new(DirectDbReader::new(db_config)));
+                let direct_reader = Arc::new(DirectDbReader::new(db_config));
+                werka = werka
+                    .with_lookup(direct_reader.clone())
+                    .with_customer_issue_source_lookup(direct_reader);
             }
             Ok(None) => {}
             Err(error) => {

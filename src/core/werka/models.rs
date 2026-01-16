@@ -112,6 +112,46 @@ pub struct CustomerItemOption {
     pub warehouse: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct WerkaCustomerIssueCreateRequest {
+    pub customer_ref: String,
+    pub item_code: String,
+    pub qty: f64,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source_barcode: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source_stock_entry: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_line_index: Option<i32>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WerkaCustomerIssueSource {
+    pub barcode: String,
+    pub stock_entry_name: String,
+    pub line_index: Option<i32>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct WerkaCustomerIssueCreateInput {
+    pub customer_ref: String,
+    pub item_code: String,
+    pub qty: f64,
+    pub source: WerkaCustomerIssueSource,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct WerkaCustomerIssueRecord {
+    pub entry_id: String,
+    pub customer_ref: String,
+    pub customer_name: String,
+    pub item_code: String,
+    pub item_name: String,
+    pub uom: String,
+    pub qty: f64,
+    pub created_label: String,
+}
+
 fn is_zero(value: &f64) -> bool {
     *value == 0.0
 }
