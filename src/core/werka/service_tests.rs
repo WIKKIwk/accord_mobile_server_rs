@@ -2,7 +2,12 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use super::models::{DispatchRecord, WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry};
+use time::Date;
+
+use super::models::{
+    DispatchRecord, WerkaArchiveResponse, WerkaArchiveSummary, WerkaHomeData, WerkaHomeSummary,
+    WerkaStatusBreakdownEntry,
+};
 use super::ports::{WerkaHomeLookup, WerkaPortError};
 use super::service::WerkaService;
 
@@ -53,6 +58,16 @@ async fn status_details_returns_none_without_lookup() {
         .status_details("pending", "SUP-001")
         .await
         .expect("status details result");
+
+    assert!(data.is_none());
+}
+
+#[tokio::test]
+async fn archive_returns_none_without_lookup() {
+    let data = WerkaService::new()
+        .archive("sent", "yearly", None, None)
+        .await
+        .expect("archive result");
 
     assert!(data.is_none());
 }
@@ -134,6 +149,20 @@ async fn status_details_uses_lookup_with_kind_and_supplier() {
 
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].id, "PR-001");
+}
+
+#[tokio::test]
+async fn archive_uses_lookup_with_filters() {
+    let items = WerkaService::new()
+        .with_lookup(Arc::new(FakeWerkaHomeLookup))
+        .archive("sent", "monthly", None, None)
+        .await
+        .expect("archive result")
+        .expect("archive data");
+
+    assert_eq!(items.kind, "sent");
+    assert_eq!(items.period, "monthly");
+    assert_eq!(items.summary.record_count, 1);
 }
 
 struct FakeWerkaHomeLookup;
@@ -239,5 +268,28 @@ impl WerkaHomeLookup for FakeWerkaHomeLookup {
             created_label: "2026-01-16T10:00:00Z".to_string(),
             ..DispatchRecord::default()
         }])
+    }
+
+    async fn werka_archive(
+        &self,
+        kind: &str,
+        period: &str,
+        from: Option<Date>,
+        to: Option<Date>,
+    ) -> Result<WerkaArchiveResponse, WerkaPortError> {
+        assert_eq!(kind, "sent");
+        assert_eq!(period, "monthly");
+        assert!(from.is_none());
+        assert!(to.is_none());
+        Ok(WerkaArchiveResponse {
+            kind: "sent".to_string(),
+            period: "monthly".to_string(),
+            summary: WerkaArchiveSummary {
+                record_count: 1,
+                totals_by_uom: Vec::new(),
+            },
+            items: Vec::new(),
+            ..WerkaArchiveResponse::default()
+        })
     }
 }

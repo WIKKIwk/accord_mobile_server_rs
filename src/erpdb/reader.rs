@@ -1,12 +1,15 @@
 use async_trait::async_trait;
 use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions};
 use sqlx::{MySqlPool, query_as};
+use time::Date;
 
 use crate::config::DirectDbConfig;
 use crate::core::werka::models::{
-    DispatchRecord, WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry,
+    DispatchRecord, WerkaArchiveResponse, WerkaHomeData, WerkaHomeSummary,
+    WerkaStatusBreakdownEntry,
 };
 use crate::core::werka::ports::{WerkaHomeLookup, WerkaPortError};
+use crate::erpdb::werka_archive::read_werka_archive;
 use crate::erpdb::werka_history::{SupplierAckRow, build_werka_history};
 use crate::erpdb::werka_home::{
     DeliveryNoteSummaryRow, PurchaseReceiptSummaryRow, build_werka_home,
@@ -149,6 +152,16 @@ impl DirectDbReader {
             supplier_ref,
         ))
     }
+
+    async fn archive(
+        &self,
+        kind: &str,
+        period: &str,
+        from: Option<Date>,
+        to: Option<Date>,
+    ) -> Result<WerkaArchiveResponse, sqlx::Error> {
+        read_werka_archive(&self.pool, kind, period, from, to).await
+    }
 }
 
 #[async_trait]
@@ -192,6 +205,18 @@ impl WerkaHomeLookup for DirectDbReader {
         supplier_ref: &str,
     ) -> Result<Vec<DispatchRecord>, WerkaPortError> {
         self.status_details(kind, supplier_ref)
+            .await
+            .map_err(|error| WerkaPortError::Database(error.to_string()))
+    }
+
+    async fn werka_archive(
+        &self,
+        kind: &str,
+        period: &str,
+        from: Option<Date>,
+        to: Option<Date>,
+    ) -> Result<WerkaArchiveResponse, WerkaPortError> {
+        self.archive(kind, period, from, to)
             .await
             .map_err(|error| WerkaPortError::Database(error.to_string()))
     }

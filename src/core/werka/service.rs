@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
+use time::Date;
+
 use crate::core::werka::models::{
-    DispatchRecord, WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry,
+    DispatchRecord, WerkaArchiveResponse, WerkaHomeData, WerkaHomeSummary,
+    WerkaStatusBreakdownEntry,
 };
 use crate::core::werka::ports::{WerkaHomeLookup, WerkaPortError};
 
@@ -83,5 +86,19 @@ impl WerkaService {
             .werka_status_details(kind, supplier_ref)
             .await
             .map(Some)
+    }
+
+    pub async fn archive(
+        &self,
+        kind: &str,
+        period: &str,
+        from: Option<Date>,
+        to: Option<Date>,
+    ) -> Result<Option<WerkaArchiveResponse>, WerkaPortError> {
+        let Some(lookup) = &self.lookup else {
+            return Ok(None);
+        };
+
+        lookup.werka_archive(kind, period, from, to).await.map(Some)
     }
 }

@@ -2,11 +2,13 @@ use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use serde::Deserialize;
+use time::{Date, Month};
 
 use crate::app::AppState;
 use crate::core::auth::models::{Principal, PrincipalRole};
 use crate::core::werka::models::{
-    DispatchRecord, WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry,
+    DispatchRecord, WerkaArchiveResponse, WerkaHomeData, WerkaHomeSummary,
+    WerkaStatusBreakdownEntry,
 };
 use crate::http::handlers::auth::{ErrorResponse, bearer_token};
 
@@ -19,6 +21,14 @@ pub struct StatusBreakdownQuery {
 pub struct StatusDetailsQuery {
     kind: Option<String>,
     supplier_ref: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ArchiveQuery {
+    kind: Option<String>,
+    period: Option<String>,
+    from: Option<String>,
+    to: Option<String>,
 }
 
 pub async fn status_breakdown(
@@ -57,6 +67,29 @@ pub async fn status_details(
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
                 error: "werka status details failed",
+            }),
+        )),
+    }
+}
+
+pub async fn archive(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ArchiveQuery>,
+) -> Result<Json<WerkaArchiveResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let principal = authorize(&state, &headers).await?;
+    require_werka(&principal)?;
+
+    let from = parse_archive_date(query.from.as_deref())?;
+    let to = parse_archive_date(query.to.as_deref())?;
+    let kind = query.kind.as_deref().unwrap_or("").trim();
+    let period = query.period.as_deref().unwrap_or("").trim();
+    match state.werka.archive(kind, period, from, to).await {
+        Ok(Some(data)) => Ok(Json(data)),
+        Ok(None) | Err(_) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "werka archive failed",
             }),
         )),
     }
@@ -158,6 +191,35 @@ fn unauthorized() -> (StatusCode, Json<ErrorResponse>) {
         StatusCode::UNAUTHORIZED,
         Json(ErrorResponse {
             error: "unauthorized",
+        }),
+    )
+}
+
+fn parse_archive_date(
+    raw: Option<&str>,
+) -> Result<Option<Date>, (StatusCode, Json<ErrorResponse>)> {
+    let Some(trimmed) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+
+    let parts: Vec<_> = trimmed.split('-').collect();
+    if parts.len() != 3 {
+        return Err(archive_failed());
+    }
+    let year = parts[0].parse::<i32>().map_err(|_| archive_failed())?;
+    let month = parts[1].parse::<u8>().map_err(|_| archive_failed())?;
+    let day = parts[2].parse::<u8>().map_err(|_| archive_failed())?;
+    let month = Month::try_from(month).map_err(|_| archive_failed())?;
+    Date::from_calendar_date(year, month, day)
+        .map(Some)
+        .map_err(|_| archive_failed())
+}
+
+fn archive_failed() -> (StatusCode, Json<ErrorResponse>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ErrorResponse {
+            error: "werka archive failed",
         }),
     )
 }

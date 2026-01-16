@@ -51,6 +51,30 @@ pub struct WerkaStatusBreakdownEntry {
     pub uom: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ArchiveTotalByUom {
+    pub uom: String,
+    pub qty: f64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct WerkaArchiveSummary {
+    pub record_count: usize,
+    pub totals_by_uom: Vec<ArchiveTotalByUom>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct WerkaArchiveResponse {
+    pub kind: String,
+    pub period: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub from: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub to: String,
+    pub summary: WerkaArchiveSummary,
+    pub items: Vec<DispatchRecord>,
+}
+
 fn is_zero(value: &f64) -> bool {
     *value == 0.0
 }
