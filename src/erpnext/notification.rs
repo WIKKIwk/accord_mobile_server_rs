@@ -79,6 +79,43 @@ impl NotificationDetailWriter for ErpnextClient {
             })
             .collect())
     }
+
+    async fn add_notification_purchase_receipt_comment(
+        &self,
+        name: &str,
+        content: &str,
+    ) -> Result<(), WerkaPortError> {
+        SupplierUnannouncedWriter::add_purchase_receipt_comment(self, name, content).await
+    }
+
+    async fn update_notification_purchase_receipt_remarks(
+        &self,
+        name: &str,
+        remarks: &str,
+    ) -> Result<(), WerkaPortError> {
+        SupplierUnannouncedWriter::update_purchase_receipt_remarks(self, name, remarks).await
+    }
+
+    async fn add_notification_delivery_note_comment(
+        &self,
+        name: &str,
+        content: &str,
+    ) -> Result<(), WerkaPortError> {
+        if content.trim().is_empty() {
+            return Ok(());
+        }
+        self.notification_request_empty(
+            Method::POST,
+            "/api/resource/Comment",
+            Some(serde_json::json!({
+                "comment_type": "Comment",
+                "reference_doctype": "Delivery Note",
+                "reference_name": name.trim(),
+                "content": content.trim(),
+            })),
+        )
+        .await
+    }
 }
 
 impl ErpnextClient {
@@ -113,6 +150,29 @@ impl ErpnextClient {
         }
         let response = request.send().await.map_err(request_error)?;
         decode_response(response).await
+    }
+
+    async fn notification_request_empty(
+        &self,
+        method: Method,
+        path: &str,
+        payload: Option<Value>,
+    ) -> Result<(), WerkaPortError> {
+        let mut request = self
+            .http
+            .request(method, format!("{}{}", self.base_url, encoded_path(path)))
+            .header(reqwest::header::AUTHORIZATION, self.auth_header());
+        if let Some(payload) = payload {
+            request = request.json(&payload);
+        }
+        let response = request.send().await.map_err(request_error)?;
+        let status = response.status();
+        let body = response.text().await.map_err(request_error)?;
+        if status.is_success() {
+            Ok(())
+        } else {
+            Err(WerkaPortError::WriteFailed(body))
+        }
     }
 }
 

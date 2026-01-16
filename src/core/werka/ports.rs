@@ -312,6 +312,33 @@ pub trait NotificationDetailWriter: Send + Sync {
         name: &str,
         limit: usize,
     ) -> Result<Vec<PurchaseReceiptComment>, WerkaPortError>;
+    async fn add_notification_purchase_receipt_comment(
+        &self,
+        _name: &str,
+        _content: &str,
+    ) -> Result<(), WerkaPortError> {
+        Err(WerkaPortError::WriteFailed(
+            "purchase receipt comment writer unavailable".to_string(),
+        ))
+    }
+    async fn update_notification_purchase_receipt_remarks(
+        &self,
+        _name: &str,
+        _remarks: &str,
+    ) -> Result<(), WerkaPortError> {
+        Err(WerkaPortError::WriteFailed(
+            "purchase receipt remarks writer unavailable".to_string(),
+        ))
+    }
+    async fn add_notification_delivery_note_comment(
+        &self,
+        _name: &str,
+        _content: &str,
+    ) -> Result<(), WerkaPortError> {
+        Err(WerkaPortError::WriteFailed(
+            "delivery note comment writer unavailable".to_string(),
+        ))
+    }
 }
 
 #[async_trait]

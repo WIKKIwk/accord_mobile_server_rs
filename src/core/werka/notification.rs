@@ -104,7 +104,7 @@ async fn delivery_note_detail(
     Ok(NotificationDetail { record, comments })
 }
 
-fn authorize_notification_detail(
+pub(crate) fn authorize_notification_detail(
     role: &PrincipalRole,
     principal_ref: &str,
     target: &NotificationTarget,
@@ -130,7 +130,7 @@ fn authorize_notification_detail(
     Ok(())
 }
 
-fn with_supplier_display_name(
+pub(crate) fn with_supplier_display_name(
     mut detail: NotificationDetail,
     role: &PrincipalRole,
     principal_display_name: &str,
@@ -239,7 +239,9 @@ fn customer_decision_quantities(item: &DeliveryNoteNotificationDraft, status: &s
     }
 }
 
-fn resolve_notification_target(receipt_id: &str) -> Result<NotificationTarget, WerkaPortError> {
+pub(crate) fn resolve_notification_target(
+    receipt_id: &str,
+) -> Result<NotificationTarget, WerkaPortError> {
     let mut trimmed = receipt_id.trim();
     let mut event_type = "";
     if let Some(rest) = trimmed.strip_prefix(SUPPLIER_ACK_PREFIX) {
@@ -287,13 +289,13 @@ fn first_non_empty(first: &str, second: &str) -> String {
     }
 }
 
-struct NotificationTarget {
-    name: String,
-    target_type: NotificationTargetType,
-    event_type: String,
+pub(crate) struct NotificationTarget {
+    pub(crate) name: String,
+    pub(crate) target_type: NotificationTargetType,
+    pub(crate) event_type: String,
 }
 
-enum NotificationTargetType {
+pub(crate) enum NotificationTargetType {
     PurchaseReceipt,
     DeliveryNote,
 }

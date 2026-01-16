@@ -17,6 +17,10 @@ pub fn build_router(state: AppState) -> Router {
             "/v1/mobile/notifications/detail",
             any(notifications::detail),
         )
+        .route(
+            "/v1/mobile/notifications/comments",
+            any(notifications::comment),
+        )
         .route("/v1/mobile/profile/avatar/view", get(profile::avatar_view))
         .route(
             "/v1/mobile/supplier/unannounced/respond",

@@ -42,6 +42,11 @@ pub struct NotificationDetail {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NotificationCommentCreateRequest {
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WerkaHomeSummary {
     pub pending_count: i64,
     pub confirmed_count: i64,

@@ -5,6 +5,7 @@ mod lookup_service;
 mod lookup_service_tests;
 pub mod models;
 mod notification;
+mod notification_comment;
 pub mod ports;
 pub mod service;
 #[cfg(test)]

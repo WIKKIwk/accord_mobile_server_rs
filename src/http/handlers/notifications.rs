@@ -1,11 +1,12 @@
 use axum::Json;
+use axum::body::Bytes;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, Method, StatusCode};
 use serde::Deserialize;
 
 use crate::app::AppState;
 use crate::core::auth::models::{Principal, PrincipalRole};
-use crate::core::werka::models::NotificationDetail;
+use crate::core::werka::models::{NotificationCommentCreateRequest, NotificationDetail};
 use crate::http::handlers::auth::{ErrorResponse, bearer_token};
 
 #[derive(Debug, Deserialize)]
@@ -63,6 +64,73 @@ pub async fn detail(
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
                 error: "notification detail failed",
+            }),
+        )),
+    }
+}
+
+pub async fn comment(
+    State(state): State<AppState>,
+    method: Method,
+    headers: HeaderMap,
+    Query(query): Query<NotificationDetailQuery>,
+    body: Bytes,
+) -> Result<Json<NotificationDetail>, (StatusCode, Json<ErrorResponse>)> {
+    if method != Method::POST {
+        return Err((
+            StatusCode::METHOD_NOT_ALLOWED,
+            Json(ErrorResponse {
+                error: "method not allowed",
+            }),
+        ));
+    }
+    let principal = authorize(&state, &headers).await?;
+    require_notification_role(&principal)?;
+    let receipt_id = query.receipt_id.unwrap_or_default();
+    if receipt_id.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "receipt_id is required",
+            }),
+        ));
+    }
+    let request: NotificationCommentCreateRequest =
+        serde_json::from_slice(&body).map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "invalid json",
+                }),
+            )
+        })?;
+
+    match state
+        .werka
+        .add_notification_comment(
+            principal.role,
+            &principal.ref_,
+            &principal.display_name,
+            &receipt_id,
+            &request.message,
+        )
+        .await
+    {
+        Ok(Some(detail)) => Ok(Json(detail)),
+        Ok(None) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "notification comment failed",
+            }),
+        )),
+        Err(error) if error.to_string().contains("unauthorized") => Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse { error: "forbidden" }),
+        )),
+        Err(_) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "notification comment failed",
             }),
         )),
     }
