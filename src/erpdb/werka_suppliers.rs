@@ -38,12 +38,12 @@ struct SupplierDirectoryRow {
     phone: String,
 }
 
-fn clamp_limit(value: usize, fallback: usize, max: usize) -> usize {
+pub(crate) fn clamp_limit(value: usize, fallback: usize, max: usize) -> usize {
     let value = if value == 0 { fallback } else { value };
     if max > 0 && value > max { max } else { value }
 }
 
-fn like_pattern(query: &str) -> String {
+pub(crate) fn like_pattern(query: &str) -> String {
     let trimmed = query.trim();
     if trimmed.is_empty() {
         return "%".to_string();

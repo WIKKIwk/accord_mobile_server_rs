@@ -8,8 +8,8 @@ use time::{Date, Month};
 use crate::app::AppState;
 use crate::core::auth::models::{Principal, PrincipalRole};
 use crate::core::werka::models::{
-    DispatchRecord, WerkaArchiveResponse, WerkaHomeData, WerkaHomeSummary,
-    WerkaStatusBreakdownEntry,
+    CustomerDirectoryEntry, DispatchRecord, SupplierDirectoryEntry, WerkaArchiveResponse,
+    WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry,
 };
 use crate::http::archive_pdf::build_archive_pdf;
 use crate::http::handlers::auth::{ErrorResponse, bearer_token};
@@ -44,10 +44,7 @@ pub async fn suppliers(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<DirectoryQuery>,
-) -> Result<
-    Json<Vec<crate::core::werka::models::SupplierDirectoryEntry>>,
-    (StatusCode, Json<ErrorResponse>),
-> {
+) -> Result<Json<Vec<SupplierDirectoryEntry>>, (StatusCode, Json<ErrorResponse>)> {
     let principal = authorize(&state, &headers).await?;
     require_werka(&principal)?;
 
@@ -60,6 +57,28 @@ pub async fn suppliers(
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
                 error: "werka suppliers failed",
+            }),
+        )),
+    }
+}
+
+pub async fn customers(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<DirectoryQuery>,
+) -> Result<Json<Vec<CustomerDirectoryEntry>>, (StatusCode, Json<ErrorResponse>)> {
+    let principal = authorize(&state, &headers).await?;
+    require_werka(&principal)?;
+
+    let q = query.q.as_deref().unwrap_or("").trim();
+    let limit = optional_search_limit(query.limit.as_deref(), 200, 200);
+    let offset = optional_search_offset(query.offset.as_deref());
+    match state.werka.customers(q, limit, offset).await {
+        Ok(Some(items)) => Ok(Json(items)),
+        Ok(None) | Err(_) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "werka customers failed",
             }),
         )),
     }

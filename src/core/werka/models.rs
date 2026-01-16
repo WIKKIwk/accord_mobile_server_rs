@@ -83,6 +83,14 @@ pub struct SupplierDirectoryEntry {
     pub phone: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CustomerDirectoryEntry {
+    #[serde(rename = "ref")]
+    pub ref_: String,
+    pub name: String,
+    pub phone: String,
+}
+
 fn is_zero(value: &f64) -> bool {
     *value == 0.0
 }

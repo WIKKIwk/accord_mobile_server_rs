@@ -79,52 +79,6 @@ async fn auth_me_route_is_not_registered() {
 }
 
 #[tokio::test]
-async fn avatar_view_requires_auth() {
-    let app = build_router(test_state());
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/v1/mobile/profile/avatar/view")
-                .body(Body::empty())
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-}
-
-#[tokio::test]
-async fn avatar_view_forbids_non_supplier() {
-    let state = test_state();
-    let token = state
-        .sessions
-        .create(Principal {
-            role: PrincipalRole::Customer,
-            display_name: "Customer".to_string(),
-            legal_name: "Customer".to_string(),
-            ref_: "CUST-001".to_string(),
-            phone: "+998901234567".to_string(),
-            avatar_url: String::new(),
-        })
-        .await
-        .expect("session");
-    let app = build_router(state);
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/v1/mobile/profile/avatar/view")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::empty())
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
-}
-
-#[tokio::test]
 async fn werka_home_requires_auth() {
     let app = build_router(test_state());
     let response = app

@@ -28,6 +28,7 @@ pub fn build_router(state: AppState) -> Router {
             any(werka::status_details),
         )
         .route("/v1/mobile/werka/summary", any(werka::summary))
+        .route("/v1/mobile/werka/customers", any(werka::customers))
         .route("/v1/mobile/werka/suppliers", any(werka::suppliers))
         .route("/v1/mobile/werka/home", any(werka::home))
         .layer(TraceLayer::new_for_http())

@@ -5,8 +5,8 @@ use async_trait::async_trait;
 use time::Date;
 
 use super::models::{
-    DispatchRecord, SupplierDirectoryEntry, WerkaArchiveResponse, WerkaArchiveSummary,
-    WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry,
+    CustomerDirectoryEntry, DispatchRecord, SupplierDirectoryEntry, WerkaArchiveResponse,
+    WerkaArchiveSummary, WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry,
 };
 use super::ports::{WerkaHomeLookup, WerkaPortError};
 use super::service::WerkaService;
@@ -78,6 +78,16 @@ async fn suppliers_returns_none_without_lookup() {
         .suppliers("Ali", 20, 3)
         .await
         .expect("suppliers result");
+
+    assert!(data.is_none());
+}
+
+#[tokio::test]
+async fn customers_returns_none_without_lookup() {
+    let data = WerkaService::new()
+        .customers("Ali", 20, 3)
+        .await
+        .expect("customers result");
 
     assert!(data.is_none());
 }
@@ -186,6 +196,19 @@ async fn suppliers_uses_lookup_with_pagination() {
 
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].ref_, "SUP-001");
+}
+
+#[tokio::test]
+async fn customers_uses_lookup_with_pagination() {
+    let items = WerkaService::new()
+        .with_lookup(Arc::new(FakeWerkaHomeLookup))
+        .customers("Ali", 20, 3)
+        .await
+        .expect("customers result")
+        .expect("customers data");
+
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].ref_, "CUST-001");
 }
 
 struct FakeWerkaHomeLookup;
@@ -329,6 +352,22 @@ impl WerkaHomeLookup for FakeWerkaHomeLookup {
             ref_: "SUP-001".to_string(),
             name: "Ali".to_string(),
             phone: "+998901111111".to_string(),
+        }])
+    }
+
+    async fn werka_customers(
+        &self,
+        query: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<CustomerDirectoryEntry>, WerkaPortError> {
+        assert_eq!(query, "Ali");
+        assert_eq!(limit, 20);
+        assert_eq!(offset, 3);
+        Ok(vec![CustomerDirectoryEntry {
+            ref_: "CUST-001".to_string(),
+            name: "Ali Market".to_string(),
+            phone: "+998902222222".to_string(),
         }])
     }
 }

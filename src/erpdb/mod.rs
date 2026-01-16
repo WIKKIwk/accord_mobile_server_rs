@@ -1,5 +1,6 @@
 pub mod reader;
 mod werka_archive;
+mod werka_customers;
 mod werka_history;
 mod werka_home;
 mod werka_pending;
