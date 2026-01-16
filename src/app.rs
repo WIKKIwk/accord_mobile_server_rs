@@ -33,6 +33,17 @@ impl AppState {
                     config.admin_supplier_store_path.clone(),
                 )),
             );
+            auth = auth.with_customer_dependencies(
+                Arc::new(ErpnextClient::new(
+                    config.erp_url.clone(),
+                    config.erp_api_key.clone(),
+                    config.erp_api_secret.clone(),
+                    config.erp_timeout,
+                )),
+                Arc::new(AdminSupplierStateStore::new(
+                    config.admin_supplier_store_path.clone(),
+                )),
+            );
         }
 
         Self {
