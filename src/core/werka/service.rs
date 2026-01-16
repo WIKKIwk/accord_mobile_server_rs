@@ -48,4 +48,12 @@ impl WerkaService {
 
         lookup.werka_pending(limit).await.map(Some)
     }
+
+    pub async fn history(&self) -> Result<Option<Vec<DispatchRecord>>, WerkaPortError> {
+        let Some(lookup) = &self.lookup else {
+            return Ok(None);
+        };
+
+        lookup.werka_history().await.map(Some)
+    }
 }

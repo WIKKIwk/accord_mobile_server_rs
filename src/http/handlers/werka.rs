@@ -25,6 +25,24 @@ pub async fn pending(
     }
 }
 
+pub async fn history(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<DispatchRecord>>, (StatusCode, Json<ErrorResponse>)> {
+    let principal = authorize(&state, &headers).await?;
+    require_werka(&principal)?;
+
+    match state.werka.history().await {
+        Ok(Some(items)) => Ok(Json(items)),
+        Ok(None) | Err(_) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "history fetch failed",
+            }),
+        )),
+    }
+}
+
 pub async fn summary(
     State(state): State<AppState>,
     headers: HeaderMap,

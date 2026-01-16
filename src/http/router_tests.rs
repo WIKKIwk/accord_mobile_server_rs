@@ -459,4 +459,8 @@ impl WerkaHomeLookup for FakeWerkaHomeLookup {
             ..DispatchRecord::default()
         }])
     }
+
+    async fn werka_history(&self) -> Result<Vec<DispatchRecord>, WerkaPortError> {
+        Ok(Vec::new())
+    }
 }

@@ -31,6 +31,13 @@ async fn pending_returns_none_without_lookup() {
 }
 
 #[tokio::test]
+async fn history_returns_none_without_lookup() {
+    let data = WerkaService::new().history().await.expect("history result");
+
+    assert!(data.is_none());
+}
+
+#[tokio::test]
 async fn home_preloads_from_lookup_with_limit() {
     let data = WerkaService::new()
         .with_lookup(Arc::new(FakeWerkaHomeLookup))
@@ -68,6 +75,19 @@ async fn pending_uses_lookup_with_limit() {
 
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].id, "PR-001");
+}
+
+#[tokio::test]
+async fn history_uses_lookup() {
+    let items = WerkaService::new()
+        .with_lookup(Arc::new(FakeWerkaHomeLookup))
+        .history()
+        .await
+        .expect("history result")
+        .expect("history data");
+
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].event_type, "supplier_ack");
 }
 
 struct FakeWerkaHomeLookup;
@@ -116,6 +136,22 @@ impl WerkaHomeLookup for FakeWerkaHomeLookup {
             sent_qty: 10.0,
             accepted_qty: 0.0,
             status: "pending".to_string(),
+            created_label: "2026-01-16T10:00:00Z".to_string(),
+            ..DispatchRecord::default()
+        }])
+    }
+
+    async fn werka_history(&self) -> Result<Vec<DispatchRecord>, WerkaPortError> {
+        Ok(vec![DispatchRecord {
+            id: "supplier_ack:COMM-001".to_string(),
+            supplier_name: "Supplier".to_string(),
+            item_code: "ITEM-001".to_string(),
+            item_name: "Item".to_string(),
+            uom: "Kg".to_string(),
+            sent_qty: 10.0,
+            accepted_qty: 10.0,
+            event_type: "supplier_ack".to_string(),
+            status: "accepted".to_string(),
             created_label: "2026-01-16T10:00:00Z".to_string(),
             ..DispatchRecord::default()
         }])

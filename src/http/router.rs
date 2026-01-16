@@ -14,6 +14,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/mobile/auth/logout", post(auth::logout))
         .route("/v1/mobile/me", get(auth::me))
         .route("/v1/mobile/profile/avatar/view", get(profile::avatar_view))
+        .route("/v1/mobile/werka/history", any(werka::history))
         .route("/v1/mobile/werka/pending", any(werka::pending))
         .route("/v1/mobile/werka/summary", any(werka::summary))
         .route("/v1/mobile/werka/home", any(werka::home))
