@@ -62,7 +62,8 @@ impl AppState {
                 let direct_reader = Arc::new(DirectDbReader::new(db_config));
                 werka = werka
                     .with_lookup(direct_reader.clone())
-                    .with_customer_issue_source_lookup(direct_reader);
+                    .with_customer_issue_source_lookup(direct_reader.clone())
+                    .with_notification_detail_lookup(direct_reader);
             }
             Ok(None) => {}
             Err(error) => {

@@ -1,4 +1,5 @@
 mod customer_issue;
+mod notification_detail;
 pub mod reader;
 mod werka_archive;
 mod werka_customers;

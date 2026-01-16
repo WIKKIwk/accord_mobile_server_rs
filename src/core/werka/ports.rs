@@ -2,9 +2,9 @@ use async_trait::async_trait;
 use time::Date;
 
 use crate::core::werka::models::{
-    CustomerDirectoryEntry, CustomerItemOption, DispatchRecord, SupplierDirectoryEntry,
-    SupplierItem, WerkaArchiveResponse, WerkaCustomerIssueRecord, WerkaHomeData, WerkaHomeSummary,
-    WerkaStatusBreakdownEntry,
+    CustomerDirectoryEntry, CustomerItemOption, DispatchRecord, NotificationDetail,
+    SupplierDirectoryEntry, SupplierItem, WerkaArchiveResponse, WerkaCustomerIssueRecord,
+    WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry,
 };
 
 #[async_trait]
@@ -312,6 +312,14 @@ pub trait NotificationDetailWriter: Send + Sync {
         name: &str,
         limit: usize,
     ) -> Result<Vec<PurchaseReceiptComment>, WerkaPortError>;
+}
+
+#[async_trait]
+pub trait NotificationDetailLookup: Send + Sync {
+    async fn notification_detail_by_receipt_id(
+        &self,
+        receipt_id: &str,
+    ) -> Result<NotificationDetail, WerkaPortError>;
 }
 
 #[async_trait]

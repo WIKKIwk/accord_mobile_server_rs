@@ -24,10 +24,20 @@ impl WerkaService {
         principal_display_name: &str,
         receipt_id: &str,
     ) -> Result<Option<NotificationDetail>, WerkaPortError> {
+        let target = resolve_notification_target(receipt_id)?;
+        if let Some(lookup) = &self.notification_detail_lookup
+            && let Ok(detail) = lookup.notification_detail_by_receipt_id(receipt_id).await
+        {
+            authorize_notification_detail(&role, principal_ref, &target, &detail)?;
+            return Ok(Some(with_supplier_display_name(
+                detail,
+                &role,
+                principal_display_name,
+            )));
+        }
         let Some(writer) = &self.notification_detail_writer else {
             return Ok(None);
         };
-        let target = resolve_notification_target(receipt_id)?;
         let detail = match target.target_type {
             NotificationTargetType::DeliveryNote => {
                 delivery_note_detail(writer.as_ref(), &target, receipt_id).await?

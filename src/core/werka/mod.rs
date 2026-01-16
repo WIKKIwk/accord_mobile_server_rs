@@ -7,6 +7,6 @@ pub mod service;
 #[cfg(test)]
 mod service_tests;
 mod supplier_unannounced;
-mod unannounced;
+pub(crate) mod unannounced;
 #[cfg(test)]
 mod unannounced_tests;
