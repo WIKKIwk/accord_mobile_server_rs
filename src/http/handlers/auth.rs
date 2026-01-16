@@ -4,11 +4,12 @@ use axum::http::{HeaderMap, StatusCode};
 use serde::Serialize;
 
 use crate::app::AppState;
-use crate::core::auth::models::{LoginRequest, LoginResponse, Principal};
+use crate::core::auth::models::{LoginRequest, LoginResponse, Principal, PrincipalRole};
 use crate::core::auth::service::AuthError;
 
 pub async fn login(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, (StatusCode, Json<ErrorResponse>)> {
     let mut principal = state
@@ -31,8 +32,8 @@ pub async fn login(
         })?;
 
     Ok(Json(LoginResponse {
+        profile: with_avatar_proxy(&headers, principal, &token),
         token,
-        profile: principal,
         werka_home: None,
     }))
 }
@@ -60,7 +61,7 @@ pub async fn me(
     principal = state.profiles.refresh(principal).await;
     state.sessions.update(&token, principal.clone()).await;
 
-    Ok(Json(principal))
+    Ok(Json(with_avatar_proxy(&headers, principal, &token)))
 }
 
 fn bearer_token(headers: &HeaderMap) -> Option<String> {
@@ -75,6 +76,42 @@ fn bearer_token(headers: &HeaderMap) -> Option<String> {
     } else {
         Some(token.to_string())
     }
+}
+
+fn with_avatar_proxy(headers: &HeaderMap, mut principal: Principal, token: &str) -> Principal {
+    if principal.role != PrincipalRole::Supplier
+        || principal.ref_.trim().is_empty()
+        || principal.avatar_url.trim().is_empty()
+    {
+        return principal;
+    }
+
+    let Some(host) = headers
+        .get(axum::http::header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return principal;
+    };
+
+    principal.avatar_url = format!(
+        "{}://{}/v1/mobile/profile/avatar/view?token={}",
+        request_scheme(headers),
+        host,
+        urlencoding::encode(token.trim())
+    );
+    principal
+}
+
+fn request_scheme(headers: &HeaderMap) -> &str {
+    headers
+        .get("x-forwarded-proto")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| value.eq_ignore_ascii_case("https"))
+        .map(|_| "https")
+        .unwrap_or("http")
 }
 
 fn unauthorized() -> (StatusCode, Json<ErrorResponse>) {
@@ -115,3 +152,56 @@ pub struct OkResponse {
 
 #[allow(dead_code)]
 fn _login_response_contract(_response: LoginResponse) {}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::{HeaderMap, HeaderValue};
+
+    use super::with_avatar_proxy;
+    use crate::core::auth::models::{Principal, PrincipalRole};
+
+    #[test]
+    fn supplier_avatar_uses_token_proxy_url() {
+        let mut headers = HeaderMap::new();
+        headers.insert("host", HeaderValue::from_static("mobile.test"));
+
+        let principal = with_avatar_proxy(
+            &headers,
+            Principal {
+                role: PrincipalRole::Supplier,
+                display_name: "Supplier".to_string(),
+                legal_name: "Supplier".to_string(),
+                ref_: "SUP-001".to_string(),
+                phone: "+998901234567".to_string(),
+                avatar_url: "http://erp.test/files/avatar.png".to_string(),
+            },
+            "abc token",
+        );
+
+        assert_eq!(
+            principal.avatar_url,
+            "http://mobile.test/v1/mobile/profile/avatar/view?token=abc%20token"
+        );
+    }
+
+    #[test]
+    fn customer_avatar_is_not_proxied() {
+        let mut headers = HeaderMap::new();
+        headers.insert("host", HeaderValue::from_static("mobile.test"));
+
+        let principal = with_avatar_proxy(
+            &headers,
+            Principal {
+                role: PrincipalRole::Customer,
+                display_name: "Customer".to_string(),
+                legal_name: "Customer".to_string(),
+                ref_: "CUST-001".to_string(),
+                phone: "+998901234567".to_string(),
+                avatar_url: "http://erp.test/files/avatar.png".to_string(),
+            },
+            "token",
+        );
+
+        assert_eq!(principal.avatar_url, "http://erp.test/files/avatar.png");
+    }
+}
