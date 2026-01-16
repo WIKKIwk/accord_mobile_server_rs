@@ -10,7 +10,9 @@ use crate::app::AppState;
 use crate::config::AppConfig;
 use crate::core::auth::models::{Principal, PrincipalRole};
 use crate::core::session::manager::SessionManager;
-use crate::core::werka::models::{DispatchRecord, WerkaHomeData, WerkaHomeSummary};
+use crate::core::werka::models::{
+    DispatchRecord, WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry,
+};
 use crate::core::werka::ports::{WerkaHomeLookup, WerkaPortError};
 use crate::core::werka::service::WerkaService;
 
@@ -125,6 +127,88 @@ async fn werka_history_accepts_post_like_go_handler() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
+#[tokio::test]
+async fn werka_status_breakdown_requires_auth() {
+    let app = build_router(test_state());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/mobile/werka/status-breakdown?kind=pending")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn werka_status_breakdown_fails_without_provider_like_go() {
+    let state = test_state();
+    let token = werka_session(&state).await;
+    let app = build_router(state);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/mobile/werka/status-breakdown?kind=pending")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
+async fn werka_status_breakdown_returns_provider_payload() {
+    let mut state = test_state();
+    state.werka = WerkaService::new().with_lookup(Arc::new(FakeWerkaLookup));
+    let token = werka_session(&state).await;
+    let app = build_router(state);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/mobile/werka/status-breakdown?kind=returned")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("response body");
+    let value: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+    assert_eq!(value[0]["supplier_ref"], "SUP-001");
+    assert_eq!(value[0]["receipt_count"], 1);
+}
+
+#[tokio::test]
+async fn werka_status_breakdown_accepts_post_like_go_handler() {
+    let mut state = test_state();
+    state.werka = WerkaService::new().with_lookup(Arc::new(FakeWerkaLookup));
+    let token = werka_session(&state).await;
+    let app = build_router(state);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/mobile/werka/status-breakdown?kind=returned")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
 async fn werka_session(state: &AppState) -> String {
     state
         .sessions
@@ -169,6 +253,22 @@ impl WerkaHomeLookup for FakeWerkaLookup {
             status: "accepted".to_string(),
             created_label: "2026-01-16".to_string(),
             ..DispatchRecord::default()
+        }])
+    }
+
+    async fn werka_status_breakdown(
+        &self,
+        kind: &str,
+    ) -> Result<Vec<WerkaStatusBreakdownEntry>, WerkaPortError> {
+        assert_eq!(kind, "returned");
+        Ok(vec![WerkaStatusBreakdownEntry {
+            supplier_ref: "SUP-001".to_string(),
+            supplier_name: "Supplier".to_string(),
+            receipt_count: 1,
+            total_sent_qty: 10.0,
+            total_accepted_qty: 8.0,
+            total_returned_qty: 2.0,
+            uom: "Kg".to_string(),
         }])
     }
 }

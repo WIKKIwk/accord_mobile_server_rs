@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use crate::core::werka::models::{DispatchRecord, WerkaHomeData, WerkaHomeSummary};
+use crate::core::werka::models::{
+    DispatchRecord, WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry,
+};
 use crate::core::werka::ports::{WerkaHomeLookup, WerkaPortError};
 
 #[derive(Clone, Default)]
@@ -55,5 +57,16 @@ impl WerkaService {
         };
 
         lookup.werka_history().await.map(Some)
+    }
+
+    pub async fn status_breakdown(
+        &self,
+        kind: &str,
+    ) -> Result<Option<Vec<WerkaStatusBreakdownEntry>>, WerkaPortError> {
+        let Some(lookup) = &self.lookup else {
+            return Ok(None);
+        };
+
+        lookup.werka_status_breakdown(kind).await.map(Some)
     }
 }

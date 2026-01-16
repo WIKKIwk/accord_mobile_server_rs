@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use super::models::{DispatchRecord, WerkaHomeData, WerkaHomeSummary};
+use super::models::{DispatchRecord, WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry};
 use super::ports::{WerkaHomeLookup, WerkaPortError};
 use super::service::WerkaService;
 
@@ -33,6 +33,16 @@ async fn pending_returns_none_without_lookup() {
 #[tokio::test]
 async fn history_returns_none_without_lookup() {
     let data = WerkaService::new().history().await.expect("history result");
+
+    assert!(data.is_none());
+}
+
+#[tokio::test]
+async fn status_breakdown_returns_none_without_lookup() {
+    let data = WerkaService::new()
+        .status_breakdown("pending")
+        .await
+        .expect("status breakdown result");
 
     assert!(data.is_none());
 }
@@ -88,6 +98,19 @@ async fn history_uses_lookup() {
 
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].event_type, "supplier_ack");
+}
+
+#[tokio::test]
+async fn status_breakdown_uses_lookup_with_kind() {
+    let items = WerkaService::new()
+        .with_lookup(Arc::new(FakeWerkaHomeLookup))
+        .status_breakdown("returned")
+        .await
+        .expect("status breakdown result")
+        .expect("status breakdown data");
+
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].supplier_ref, "SUP-001");
 }
 
 struct FakeWerkaHomeLookup;
@@ -154,6 +177,22 @@ impl WerkaHomeLookup for FakeWerkaHomeLookup {
             status: "accepted".to_string(),
             created_label: "2026-01-16T10:00:00Z".to_string(),
             ..DispatchRecord::default()
+        }])
+    }
+
+    async fn werka_status_breakdown(
+        &self,
+        kind: &str,
+    ) -> Result<Vec<WerkaStatusBreakdownEntry>, WerkaPortError> {
+        assert_eq!(kind, "returned");
+        Ok(vec![WerkaStatusBreakdownEntry {
+            supplier_ref: "SUP-001".to_string(),
+            supplier_name: "Supplier".to_string(),
+            receipt_count: 1,
+            total_sent_qty: 10.0,
+            total_accepted_qty: 8.0,
+            total_returned_qty: 2.0,
+            uom: "Kg".to_string(),
         }])
     }
 }

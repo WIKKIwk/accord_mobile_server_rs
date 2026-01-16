@@ -16,6 +16,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/mobile/profile/avatar/view", get(profile::avatar_view))
         .route("/v1/mobile/werka/history", any(werka::history))
         .route("/v1/mobile/werka/pending", any(werka::pending))
+        .route(
+            "/v1/mobile/werka/status-breakdown",
+            any(werka::status_breakdown),
+        )
         .route("/v1/mobile/werka/summary", any(werka::summary))
         .route("/v1/mobile/werka/home", any(werka::home))
         .layer(TraceLayer::new_for_http())

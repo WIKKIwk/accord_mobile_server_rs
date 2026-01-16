@@ -3,13 +3,16 @@ use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions};
 use sqlx::{MySqlPool, query_as};
 
 use crate::config::DirectDbConfig;
-use crate::core::werka::models::{DispatchRecord, WerkaHomeData, WerkaHomeSummary};
+use crate::core::werka::models::{
+    DispatchRecord, WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry,
+};
 use crate::core::werka::ports::{WerkaHomeLookup, WerkaPortError};
 use crate::erpdb::werka_history::{SupplierAckRow, build_werka_history};
 use crate::erpdb::werka_home::{
     DeliveryNoteSummaryRow, PurchaseReceiptSummaryRow, build_werka_home,
 };
 use crate::erpdb::werka_pending::build_werka_pending;
+use crate::erpdb::werka_status_breakdown::build_werka_status_breakdown;
 use crate::erpdb::werka_summary::{
     DeliveryNoteStatusRow, PurchaseReceiptStatusRow, build_werka_summary,
 };
@@ -107,6 +110,24 @@ impl DirectDbReader {
             RECENT_LIMIT,
         ))
     }
+
+    async fn status_breakdown(
+        &self,
+        kind: &str,
+    ) -> Result<Vec<WerkaStatusBreakdownEntry>, sqlx::Error> {
+        let receipts = query_as::<_, PurchaseReceiptSummaryRow>(PURCHASE_RECEIPT_ROWS_SQL)
+            .fetch_all(&self.pool)
+            .await?;
+        let delivery_notes = query_as::<_, DeliveryNoteSummaryRow>(DELIVERY_NOTE_ROWS_SQL)
+            .fetch_all(&self.pool)
+            .await?;
+
+        Ok(build_werka_status_breakdown(
+            &receipts,
+            &delivery_notes,
+            kind,
+        ))
+    }
 }
 
 #[async_trait]
@@ -131,6 +152,15 @@ impl WerkaHomeLookup for DirectDbReader {
 
     async fn werka_history(&self) -> Result<Vec<DispatchRecord>, WerkaPortError> {
         self.history()
+            .await
+            .map_err(|error| WerkaPortError::Database(error.to_string()))
+    }
+
+    async fn werka_status_breakdown(
+        &self,
+        kind: &str,
+    ) -> Result<Vec<WerkaStatusBreakdownEntry>, WerkaPortError> {
+        self.status_breakdown(kind)
             .await
             .map_err(|error| WerkaPortError::Database(error.to_string()))
     }

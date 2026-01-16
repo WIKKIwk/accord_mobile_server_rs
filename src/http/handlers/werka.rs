@@ -1,11 +1,39 @@
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
+use serde::Deserialize;
 
 use crate::app::AppState;
 use crate::core::auth::models::{Principal, PrincipalRole};
-use crate::core::werka::models::{DispatchRecord, WerkaHomeData, WerkaHomeSummary};
+use crate::core::werka::models::{
+    DispatchRecord, WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry,
+};
 use crate::http::handlers::auth::{ErrorResponse, bearer_token};
+
+#[derive(Debug, Deserialize)]
+pub struct StatusBreakdownQuery {
+    kind: Option<String>,
+}
+
+pub async fn status_breakdown(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<StatusBreakdownQuery>,
+) -> Result<Json<Vec<WerkaStatusBreakdownEntry>>, (StatusCode, Json<ErrorResponse>)> {
+    let principal = authorize(&state, &headers).await?;
+    require_werka(&principal)?;
+
+    let kind = query.kind.as_deref().unwrap_or("").trim();
+    match state.werka.status_breakdown(kind).await {
+        Ok(Some(items)) => Ok(Json(items)),
+        Ok(None) | Err(_) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "werka status breakdown failed",
+            }),
+        )),
+    }
+}
 
 pub async fn pending(
     State(state): State<AppState>,

@@ -10,7 +10,9 @@ use crate::app::AppState;
 use crate::config::AppConfig;
 use crate::core::auth::models::{Principal, PrincipalRole};
 use crate::core::session::manager::SessionManager;
-use crate::core::werka::models::{DispatchRecord, WerkaHomeData, WerkaHomeSummary};
+use crate::core::werka::models::{
+    DispatchRecord, WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry,
+};
 use crate::core::werka::ports::{WerkaHomeLookup, WerkaPortError};
 use crate::core::werka::service::WerkaService;
 
@@ -461,6 +463,13 @@ impl WerkaHomeLookup for FakeWerkaHomeLookup {
     }
 
     async fn werka_history(&self) -> Result<Vec<DispatchRecord>, WerkaPortError> {
+        Ok(Vec::new())
+    }
+
+    async fn werka_status_breakdown(
+        &self,
+        _kind: &str,
+    ) -> Result<Vec<WerkaStatusBreakdownEntry>, WerkaPortError> {
         Ok(Vec::new())
     }
 }

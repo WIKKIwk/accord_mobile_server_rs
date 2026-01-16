@@ -40,6 +40,17 @@ pub struct WerkaHomeData {
     pub pending_items: Vec<DispatchRecord>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct WerkaStatusBreakdownEntry {
+    pub supplier_ref: String,
+    pub supplier_name: String,
+    pub receipt_count: i64,
+    pub total_sent_qty: f64,
+    pub total_accepted_qty: f64,
+    pub total_returned_qty: f64,
+    pub uom: String,
+}
+
 fn is_zero(value: &f64) -> bool {
     *value == 0.0
 }
