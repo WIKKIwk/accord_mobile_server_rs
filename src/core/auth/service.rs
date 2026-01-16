@@ -245,7 +245,12 @@ mod tests {
     fn config() -> AppConfig {
         AppConfig {
             bind_addr: "127.0.0.1:8081".parse().expect("addr"),
+            erp_url: String::new(),
+            erp_api_key: String::new(),
+            erp_api_secret: String::new(),
+            erp_timeout: std::time::Duration::from_secs(15),
             session_store_path: "data/mobile_sessions.json".into(),
+            admin_supplier_store_path: "data/mobile_admin_suppliers.json".into(),
             session_ttl_seconds: Some(30 * 24 * 60 * 60),
             supplier_prefix: "10".to_string(),
             werka_prefix: "20".to_string(),

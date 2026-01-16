@@ -7,7 +7,12 @@ use crate::error::AppError;
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub bind_addr: SocketAddr,
+    pub erp_url: String,
+    pub erp_api_key: String,
+    pub erp_api_secret: String,
+    pub erp_timeout: Duration,
     pub session_store_path: PathBuf,
+    pub admin_supplier_store_path: PathBuf,
     pub session_ttl_seconds: Option<u64>,
     pub supplier_prefix: String,
     pub werka_prefix: String,
@@ -28,10 +33,22 @@ impl AppConfig {
             .ok()
             .and_then(|raw| raw.trim().parse::<u64>().ok())
             .unwrap_or(24 * 30);
+        let erp_timeout_seconds = std::env::var("ERP_TIMEOUT_SECONDS")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u64>().ok())
+            .filter(|seconds| *seconds > 0)
+            .unwrap_or(15);
+        let admin_supplier_path = std::env::var("MOBILE_API_ADMIN_SUPPLIER_STORE_PATH")
+            .unwrap_or_else(|_| "data/mobile_admin_suppliers.json".to_string());
 
         Ok(Self {
             bind_addr: parse_bind_addr(&addr)?,
+            erp_url: env_or("ERP_URL", ""),
+            erp_api_key: env_or("ERP_API_KEY", ""),
+            erp_api_secret: env_or("ERP_API_SECRET", ""),
+            erp_timeout: Duration::from_secs(erp_timeout_seconds),
             session_store_path: PathBuf::from(session_path),
+            admin_supplier_store_path: PathBuf::from(admin_supplier_path),
             session_ttl_seconds: Some(Duration::from_secs(ttl_hours * 60 * 60).as_secs()),
             supplier_prefix: env_or("MOBILE_DEV_SUPPLIER_PREFIX", "10"),
             werka_prefix: env_or("MOBILE_DEV_WERKA_PREFIX", "20"),
@@ -41,6 +58,12 @@ impl AppConfig {
             admin_name: "Admin".to_string(),
             admin_code: "19621978".to_string(),
         })
+    }
+
+    pub fn erp_configured(&self) -> bool {
+        !self.erp_url.trim().is_empty()
+            && !self.erp_api_key.trim().is_empty()
+            && !self.erp_api_secret.trim().is_empty()
     }
 }
 

@@ -1,6 +1,7 @@
 mod app;
 mod config;
 mod core;
+mod erpnext;
 mod error;
 mod http;
 mod store;
