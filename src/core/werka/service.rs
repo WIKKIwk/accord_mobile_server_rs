@@ -1,13 +1,11 @@
 use std::sync::Arc;
 
+use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
-use time::{Date, OffsetDateTime};
 
 use crate::core::werka::models::{
-    CustomerDirectoryEntry, CustomerItemOption, DispatchRecord, SupplierDirectoryEntry,
-    SupplierItem, WerkaArchiveResponse, WerkaCustomerIssueBatchLineResult,
-    WerkaCustomerIssueBatchResult, WerkaCustomerIssueCreateInput, WerkaCustomerIssueRecord,
-    WerkaCustomerIssueSource, WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry,
+    DispatchRecord, WerkaCustomerIssueBatchLineResult, WerkaCustomerIssueBatchResult,
+    WerkaCustomerIssueCreateInput, WerkaCustomerIssueRecord, WerkaCustomerIssueSource,
 };
 use crate::core::werka::ports::{
     CreateDeliveryNoteInput, CreatePurchaseReceiptInput, CustomerIssueSourceLookup,
@@ -27,7 +25,7 @@ const CUSTOMER_ISSUE_SOURCE_MARKER_PREFIX: &str = "accord_customer_issue_source:
 
 #[derive(Clone, Default)]
 pub struct WerkaService {
-    lookup: Option<Arc<dyn WerkaHomeLookup>>,
+    pub(crate) lookup: Option<Arc<dyn WerkaHomeLookup>>,
     customer_issue_writer: Option<Arc<dyn WerkaCustomerIssueWriter>>,
     customer_issue_source_lookup: Option<Arc<dyn CustomerIssueSourceLookup>>,
     unannounced_writer: Option<Arc<dyn WerkaUnannouncedWriter>>,
@@ -99,160 +97,6 @@ impl WerkaService {
     ) -> Self {
         self.supplier_admin_state_lookup = Some(lookup);
         self
-    }
-
-    pub async fn home(
-        &self,
-        pending_limit: usize,
-    ) -> Result<Option<WerkaHomeData>, WerkaPortError> {
-        let Some(lookup) = &self.lookup else {
-            return Ok(None);
-        };
-
-        lookup.werka_home(pending_limit).await.map(Some)
-    }
-
-    pub async fn summary(&self) -> Result<Option<WerkaHomeSummary>, WerkaPortError> {
-        let Some(lookup) = &self.lookup else {
-            return Ok(None);
-        };
-
-        lookup.werka_summary().await.map(Some)
-    }
-
-    pub async fn pending(
-        &self,
-        limit: usize,
-    ) -> Result<Option<Vec<DispatchRecord>>, WerkaPortError> {
-        let Some(lookup) = &self.lookup else {
-            return Ok(None);
-        };
-
-        lookup.werka_pending(limit).await.map(Some)
-    }
-
-    pub async fn history(&self) -> Result<Option<Vec<DispatchRecord>>, WerkaPortError> {
-        let Some(lookup) = &self.lookup else {
-            return Ok(None);
-        };
-
-        lookup.werka_history().await.map(Some)
-    }
-
-    pub async fn status_breakdown(
-        &self,
-        kind: &str,
-    ) -> Result<Option<Vec<WerkaStatusBreakdownEntry>>, WerkaPortError> {
-        let Some(lookup) = &self.lookup else {
-            return Ok(None);
-        };
-
-        lookup.werka_status_breakdown(kind).await.map(Some)
-    }
-
-    pub async fn status_details(
-        &self,
-        kind: &str,
-        supplier_ref: &str,
-    ) -> Result<Option<Vec<DispatchRecord>>, WerkaPortError> {
-        let Some(lookup) = &self.lookup else {
-            return Ok(None);
-        };
-
-        lookup
-            .werka_status_details(kind, supplier_ref)
-            .await
-            .map(Some)
-    }
-
-    pub async fn archive(
-        &self,
-        kind: &str,
-        period: &str,
-        from: Option<Date>,
-        to: Option<Date>,
-    ) -> Result<Option<WerkaArchiveResponse>, WerkaPortError> {
-        let Some(lookup) = &self.lookup else {
-            return Ok(None);
-        };
-
-        lookup.werka_archive(kind, period, from, to).await.map(Some)
-    }
-
-    pub async fn suppliers(
-        &self,
-        query: &str,
-        limit: usize,
-        offset: usize,
-    ) -> Result<Option<Vec<SupplierDirectoryEntry>>, WerkaPortError> {
-        let Some(lookup) = &self.lookup else {
-            return Ok(None);
-        };
-
-        lookup.werka_suppliers(query, limit, offset).await.map(Some)
-    }
-
-    pub async fn customers(
-        &self,
-        query: &str,
-        limit: usize,
-        offset: usize,
-    ) -> Result<Option<Vec<CustomerDirectoryEntry>>, WerkaPortError> {
-        let Some(lookup) = &self.lookup else {
-            return Ok(None);
-        };
-
-        lookup.werka_customers(query, limit, offset).await.map(Some)
-    }
-
-    pub async fn supplier_items(
-        &self,
-        supplier_ref: &str,
-        query: &str,
-        limit: usize,
-        offset: usize,
-    ) -> Result<Option<Vec<SupplierItem>>, WerkaPortError> {
-        let Some(lookup) = &self.lookup else {
-            return Ok(None);
-        };
-
-        lookup
-            .werka_supplier_items(supplier_ref, query, limit, offset)
-            .await
-            .map(Some)
-    }
-
-    pub async fn customer_items(
-        &self,
-        customer_ref: &str,
-        query: &str,
-        limit: usize,
-        offset: usize,
-    ) -> Result<Option<Vec<SupplierItem>>, WerkaPortError> {
-        let Some(lookup) = &self.lookup else {
-            return Ok(None);
-        };
-
-        lookup
-            .werka_customer_items(customer_ref, query, limit, offset)
-            .await
-            .map(Some)
-    }
-
-    pub async fn customer_item_options(
-        &self,
-        query: &str,
-        limit: usize,
-        offset: usize,
-    ) -> Result<Option<Vec<CustomerItemOption>>, WerkaPortError> {
-        let Some(lookup) = &self.lookup else {
-            return Ok(None);
-        };
-
-        lookup
-            .werka_customer_item_options(query, limit, offset)
-            .await
-            .map(Some)
     }
 
     pub async fn create_customer_issue(
