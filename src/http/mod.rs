@@ -16,3 +16,5 @@ mod werka_directory_route_tests;
 mod werka_items_route_tests;
 #[cfg(test)]
 mod werka_route_tests;
+#[cfg(test)]
+mod werka_unannounced_route_tests;

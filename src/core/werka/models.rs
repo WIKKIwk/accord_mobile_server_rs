@@ -177,6 +177,13 @@ pub struct WerkaCustomerIssueBatchResult {
     pub failed: Vec<WerkaCustomerIssueBatchLineResult>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct WerkaUnannouncedCreateRequest {
+    pub supplier_ref: String,
+    pub item_code: String,
+    pub qty: f64,
+}
+
 fn is_zero(value: &f64) -> bool {
     *value == 0.0
 }

@@ -121,6 +121,42 @@ pub struct DeliveryNoteDraft {
     pub accord_source_key: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WerkaSupplierRecord {
+    pub id: String,
+    pub name: String,
+    pub phone: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CreatePurchaseReceiptInput {
+    pub supplier: String,
+    pub supplier_phone: String,
+    pub item_code: String,
+    pub qty: f64,
+    pub uom: String,
+    pub warehouse: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PurchaseReceiptDraft {
+    pub name: String,
+    pub doc_status: i32,
+    pub status: String,
+    pub supplier: String,
+    pub supplier_name: String,
+    pub posting_date: String,
+    pub supplier_delivery_note: String,
+    pub item_code: String,
+    pub item_name: String,
+    pub qty: f64,
+    pub uom: String,
+    pub warehouse: String,
+    pub amount: f64,
+    pub currency: String,
+    pub remarks: String,
+}
+
 #[async_trait]
 pub trait WerkaCustomerIssueWriter: Send + Sync {
     async fn get_items_by_codes(&self, codes: &[String]) -> Result<Vec<ErpItem>, WerkaPortError>;
@@ -142,6 +178,34 @@ pub trait WerkaCustomerIssueWriter: Send + Sync {
     ) -> Result<(), WerkaPortError>;
     async fn submit_delivery_note(&self, name: &str) -> Result<(), WerkaPortError>;
     async fn delete_delivery_note(&self, name: &str) -> Result<(), WerkaPortError>;
+}
+
+#[async_trait]
+pub trait WerkaUnannouncedWriter: Send + Sync {
+    async fn find_supplier_for_werka(
+        &self,
+        supplier_ref: &str,
+    ) -> Result<WerkaSupplierRecord, WerkaPortError>;
+    async fn validate_supplier_item_allowed(
+        &self,
+        supplier_ref: &str,
+        item_code: &str,
+    ) -> Result<(), WerkaPortError>;
+    async fn resolve_warehouse(&self) -> Result<String, WerkaPortError>;
+    async fn create_draft_purchase_receipt(
+        &self,
+        input: CreatePurchaseReceiptInput,
+    ) -> Result<PurchaseReceiptDraft, WerkaPortError>;
+    async fn update_purchase_receipt_remarks(
+        &self,
+        name: &str,
+        remarks: &str,
+    ) -> Result<(), WerkaPortError>;
+    async fn add_purchase_receipt_comment(
+        &self,
+        name: &str,
+        content: &str,
+    ) -> Result<(), WerkaPortError>;
 }
 
 #[async_trait]

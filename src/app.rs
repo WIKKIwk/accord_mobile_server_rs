@@ -51,7 +51,9 @@ impl AppState {
                 )),
             );
             profiles = profiles.with_erp_lookup(erp_client.clone());
-            werka = werka.with_customer_issue_writer(erp_client);
+            werka = werka
+                .with_customer_issue_writer(erp_client.clone())
+                .with_unannounced_writer(erp_client);
         }
         match config.direct_db_config() {
             Ok(Some(db_config)) => {

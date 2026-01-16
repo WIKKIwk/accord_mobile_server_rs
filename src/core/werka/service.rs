@@ -10,8 +10,13 @@ use crate::core::werka::models::{
     WerkaCustomerIssueSource, WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry,
 };
 use crate::core::werka::ports::{
-    CreateDeliveryNoteInput, CustomerIssueSourceLookup, DeliveryNoteStateUpdate,
-    WerkaCustomerIssueWriter, WerkaHomeLookup, WerkaPortError,
+    CreateDeliveryNoteInput, CreatePurchaseReceiptInput, CustomerIssueSourceLookup,
+    DeliveryNoteStateUpdate, WerkaCustomerIssueWriter, WerkaHomeLookup, WerkaPortError,
+    WerkaUnannouncedWriter,
+};
+use crate::core::werka::unannounced::{
+    format_notification_comment, purchase_receipt_to_dispatch_record,
+    upsert_werka_unannounced_in_remarks,
 };
 
 const DELIVERY_FLOW_STATE_SUBMITTED: i32 = 1;
@@ -24,6 +29,7 @@ pub struct WerkaService {
     lookup: Option<Arc<dyn WerkaHomeLookup>>,
     customer_issue_writer: Option<Arc<dyn WerkaCustomerIssueWriter>>,
     customer_issue_source_lookup: Option<Arc<dyn CustomerIssueSourceLookup>>,
+    unannounced_writer: Option<Arc<dyn WerkaUnannouncedWriter>>,
 }
 
 impl WerkaService {
@@ -49,6 +55,12 @@ impl WerkaService {
         lookup: Arc<dyn CustomerIssueSourceLookup>,
     ) -> Self {
         self.customer_issue_source_lookup = Some(lookup);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn with_unannounced_writer(mut self, writer: Arc<dyn WerkaUnannouncedWriter>) -> Self {
+        self.unannounced_writer = Some(writer);
         self
     }
 
@@ -326,6 +338,53 @@ impl WerkaService {
             created,
             failed,
         }))
+    }
+
+    pub async fn create_werka_unannounced_draft(
+        &self,
+        supplier_ref: &str,
+        item_code: &str,
+        qty: f64,
+        werka_display_name: &str,
+    ) -> Result<Option<DispatchRecord>, WerkaPortError> {
+        let Some(writer) = &self.unannounced_writer else {
+            return Ok(None);
+        };
+
+        let supplier = writer.find_supplier_for_werka(supplier_ref).await?;
+        writer
+            .validate_supplier_item_allowed(&supplier.id, item_code)
+            .await?;
+        let warehouse = writer.resolve_warehouse().await?;
+        let mut draft = writer
+            .create_draft_purchase_receipt(CreatePurchaseReceiptInput {
+                supplier: supplier.id.clone(),
+                supplier_phone: supplier.phone.clone(),
+                item_code: item_code.trim().to_string(),
+                qty,
+                warehouse,
+                ..CreatePurchaseReceiptInput::default()
+            })
+            .await?;
+
+        let remarks = upsert_werka_unannounced_in_remarks(&draft.remarks, "pending", "");
+        writer
+            .update_purchase_receipt_remarks(&draft.name, &remarks)
+            .await?;
+        let comment = format_notification_comment(
+            "Werka",
+            werka_display_name,
+            "Aytilmagan mol sifatida qayd qilindi.",
+        );
+        let _ = writer
+            .add_purchase_receipt_comment(&draft.name, &comment)
+            .await;
+
+        draft.remarks = remarks;
+        let mut record = purchase_receipt_to_dispatch_record(draft, &supplier.name);
+        record.event_type = "werka_unannounced_pending".to_string();
+        record.highlight = "Werka siz qayd etmagan mahsulotni qabul qildi".to_string();
+        Ok(Some(record))
     }
 }
 
