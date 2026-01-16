@@ -1,0 +1,102 @@
+use axum::Json;
+use axum::extract::{Query, State};
+use axum::http::{HeaderMap, Method, StatusCode};
+use serde::Deserialize;
+
+use crate::app::AppState;
+use crate::core::auth::models::{Principal, PrincipalRole};
+use crate::core::werka::models::NotificationDetail;
+use crate::http::handlers::auth::{ErrorResponse, bearer_token};
+
+#[derive(Debug, Deserialize)]
+pub struct NotificationDetailQuery {
+    receipt_id: Option<String>,
+}
+
+pub async fn detail(
+    State(state): State<AppState>,
+    method: Method,
+    headers: HeaderMap,
+    Query(query): Query<NotificationDetailQuery>,
+) -> Result<Json<NotificationDetail>, (StatusCode, Json<ErrorResponse>)> {
+    if method != Method::GET {
+        return Err((
+            StatusCode::METHOD_NOT_ALLOWED,
+            Json(ErrorResponse {
+                error: "method not allowed",
+            }),
+        ));
+    }
+    let principal = authorize(&state, &headers).await?;
+    require_notification_role(&principal)?;
+    let receipt_id = query.receipt_id.unwrap_or_default();
+    if receipt_id.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "receipt_id is required",
+            }),
+        ));
+    }
+    match state
+        .werka
+        .notification_detail(
+            principal.role,
+            &principal.ref_,
+            &principal.display_name,
+            &receipt_id,
+        )
+        .await
+    {
+        Ok(Some(detail)) => Ok(Json(detail)),
+        Ok(None) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "notification detail failed",
+            }),
+        )),
+        Err(error) if error.to_string().contains("unauthorized") => Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse { error: "forbidden" }),
+        )),
+        Err(_) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "notification detail failed",
+            }),
+        )),
+    }
+}
+
+async fn authorize(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<Principal, (StatusCode, Json<ErrorResponse>)> {
+    let token = bearer_token(headers).ok_or_else(unauthorized)?;
+    state.sessions.get(&token).await.map_err(|_| unauthorized())
+}
+
+fn require_notification_role(
+    principal: &Principal,
+) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
+    if matches!(
+        principal.role,
+        PrincipalRole::Supplier | PrincipalRole::Werka | PrincipalRole::Customer
+    ) {
+        Ok(())
+    } else {
+        Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse { error: "forbidden" }),
+        ))
+    }
+}
+
+fn unauthorized() -> (StatusCode, Json<ErrorResponse>) {
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(ErrorResponse {
+            error: "unauthorized",
+        }),
+    )
+}

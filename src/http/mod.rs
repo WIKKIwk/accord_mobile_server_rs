@@ -3,6 +3,8 @@ pub mod handlers;
 pub mod router;
 
 #[cfg(test)]
+mod notification_detail_route_tests;
+#[cfg(test)]
 mod profile_route_tests;
 #[cfg(test)]
 mod router_tests;

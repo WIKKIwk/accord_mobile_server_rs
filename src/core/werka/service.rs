@@ -11,8 +11,9 @@ use crate::core::werka::models::{
 };
 use crate::core::werka::ports::{
     CreateDeliveryNoteInput, CreatePurchaseReceiptInput, CustomerIssueSourceLookup,
-    DeliveryNoteStateUpdate, SupplierUnannouncedWriter, WerkaCustomerIssueWriter, WerkaHomeLookup,
-    WerkaPortError, WerkaSupplierAdminStateLookup, WerkaUnannouncedWriter,
+    DeliveryNoteStateUpdate, NotificationDetailWriter, SupplierUnannouncedWriter,
+    WerkaCustomerIssueWriter, WerkaHomeLookup, WerkaPortError, WerkaSupplierAdminStateLookup,
+    WerkaUnannouncedWriter,
 };
 use crate::core::werka::unannounced::{
     format_notification_comment, purchase_receipt_to_dispatch_record, supplier_admin_state,
@@ -31,6 +32,7 @@ pub struct WerkaService {
     customer_issue_source_lookup: Option<Arc<dyn CustomerIssueSourceLookup>>,
     unannounced_writer: Option<Arc<dyn WerkaUnannouncedWriter>>,
     pub(crate) supplier_unannounced_writer: Option<Arc<dyn SupplierUnannouncedWriter>>,
+    pub(crate) notification_detail_writer: Option<Arc<dyn NotificationDetailWriter>>,
     supplier_admin_state_lookup: Option<Arc<dyn WerkaSupplierAdminStateLookup>>,
 }
 
@@ -71,6 +73,14 @@ impl WerkaService {
         writer: Arc<dyn SupplierUnannouncedWriter>,
     ) -> Self {
         self.supplier_unannounced_writer = Some(writer);
+        self
+    }
+
+    pub fn with_notification_detail_writer(
+        mut self,
+        writer: Arc<dyn NotificationDetailWriter>,
+    ) -> Self {
+        self.notification_detail_writer = Some(writer);
         self
     }
 

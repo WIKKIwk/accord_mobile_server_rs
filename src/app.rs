@@ -47,7 +47,8 @@ impl AppState {
             werka = werka
                 .with_customer_issue_writer(erp_client.clone())
                 .with_unannounced_writer(erp_client.clone())
-                .with_supplier_unannounced_writer(erp_client)
+                .with_supplier_unannounced_writer(erp_client.clone())
+                .with_notification_detail_writer(erp_client)
                 .with_supplier_admin_state_lookup(admin_state_store);
         }
         match config.direct_db_config() {
