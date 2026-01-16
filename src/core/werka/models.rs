@@ -91,6 +91,27 @@ pub struct CustomerDirectoryEntry {
     pub phone: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SupplierItem {
+    pub code: String,
+    pub name: String,
+    pub uom: String,
+    pub warehouse: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub item_group: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CustomerItemOption {
+    pub customer_ref: String,
+    pub customer_name: String,
+    pub customer_phone: String,
+    pub item_code: String,
+    pub item_name: String,
+    pub uom: String,
+    pub warehouse: String,
+}
+
 fn is_zero(value: &f64) -> bool {
     *value == 0.0
 }

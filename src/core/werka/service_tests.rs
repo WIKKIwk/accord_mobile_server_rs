@@ -5,8 +5,9 @@ use async_trait::async_trait;
 use time::Date;
 
 use super::models::{
-    CustomerDirectoryEntry, DispatchRecord, SupplierDirectoryEntry, WerkaArchiveResponse,
-    WerkaArchiveSummary, WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry,
+    CustomerDirectoryEntry, CustomerItemOption, DispatchRecord, SupplierDirectoryEntry,
+    SupplierItem, WerkaArchiveResponse, WerkaArchiveSummary, WerkaHomeData, WerkaHomeSummary,
+    WerkaStatusBreakdownEntry,
 };
 use super::ports::{WerkaHomeLookup, WerkaPortError};
 use super::service::WerkaService;
@@ -90,6 +91,33 @@ async fn customers_returns_none_without_lookup() {
         .expect("customers result");
 
     assert!(data.is_none());
+}
+
+#[tokio::test]
+async fn item_searches_return_none_without_lookup() {
+    let service = WerkaService::new();
+
+    assert!(
+        service
+            .supplier_items("SUP-001", "milk", 20, 3)
+            .await
+            .expect("supplier items result")
+            .is_none()
+    );
+    assert!(
+        service
+            .customer_items("CUST-001", "milk", 20, 3)
+            .await
+            .expect("customer items result")
+            .is_none()
+    );
+    assert!(
+        service
+            .customer_item_options("milk", 20, 3)
+            .await
+            .expect("customer item options result")
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -209,6 +237,31 @@ async fn customers_uses_lookup_with_pagination() {
 
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].ref_, "CUST-001");
+}
+
+#[tokio::test]
+async fn item_searches_use_lookup_with_filters() {
+    let service = WerkaService::new().with_lookup(Arc::new(FakeWerkaHomeLookup));
+
+    let supplier_items = service
+        .supplier_items("SUP-001", "milk", 20, 3)
+        .await
+        .expect("supplier items result")
+        .expect("supplier items data");
+    let customer_items = service
+        .customer_items("CUST-001", "milk", 20, 3)
+        .await
+        .expect("customer items result")
+        .expect("customer items data");
+    let options = service
+        .customer_item_options("milk", 20, 3)
+        .await
+        .expect("customer item options result")
+        .expect("customer item options data");
+
+    assert_eq!(supplier_items[0].code, "SUP-ITEM");
+    assert_eq!(customer_items[0].code, "CUST-ITEM");
+    assert_eq!(options[0].customer_ref, "CUST-001");
 }
 
 struct FakeWerkaHomeLookup;
@@ -369,5 +422,63 @@ impl WerkaHomeLookup for FakeWerkaHomeLookup {
             name: "Ali Market".to_string(),
             phone: "+998902222222".to_string(),
         }])
+    }
+
+    async fn werka_supplier_items(
+        &self,
+        supplier_ref: &str,
+        query: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<SupplierItem>, WerkaPortError> {
+        assert_eq!(supplier_ref, "SUP-001");
+        assert_eq!(query, "milk");
+        assert_eq!(limit, 20);
+        assert_eq!(offset, 3);
+        Ok(vec![supplier_item("SUP-ITEM", "Supplier Milk")])
+    }
+
+    async fn werka_customer_items(
+        &self,
+        customer_ref: &str,
+        query: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<SupplierItem>, WerkaPortError> {
+        assert_eq!(customer_ref, "CUST-001");
+        assert_eq!(query, "milk");
+        assert_eq!(limit, 20);
+        assert_eq!(offset, 3);
+        Ok(vec![supplier_item("CUST-ITEM", "Customer Milk")])
+    }
+
+    async fn werka_customer_item_options(
+        &self,
+        query: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<CustomerItemOption>, WerkaPortError> {
+        assert_eq!(query, "milk");
+        assert_eq!(limit, 20);
+        assert_eq!(offset, 3);
+        Ok(vec![CustomerItemOption {
+            customer_ref: "CUST-001".to_string(),
+            customer_name: "Ali Market".to_string(),
+            customer_phone: "+998902222222".to_string(),
+            item_code: "ITEM-001".to_string(),
+            item_name: "Milk".to_string(),
+            uom: "Kg".to_string(),
+            warehouse: "Stores - A".to_string(),
+        }])
+    }
+}
+
+fn supplier_item(code: &str, name: &str) -> SupplierItem {
+    SupplierItem {
+        code: code.to_string(),
+        name: name.to_string(),
+        uom: "Kg".to_string(),
+        warehouse: "Stores - A".to_string(),
+        item_group: String::new(),
     }
 }

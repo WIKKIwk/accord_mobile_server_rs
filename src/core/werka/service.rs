@@ -3,8 +3,8 @@ use std::sync::Arc;
 use time::Date;
 
 use crate::core::werka::models::{
-    CustomerDirectoryEntry, DispatchRecord, SupplierDirectoryEntry, WerkaArchiveResponse,
-    WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry,
+    CustomerDirectoryEntry, CustomerItemOption, DispatchRecord, SupplierDirectoryEntry,
+    SupplierItem, WerkaArchiveResponse, WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry,
 };
 use crate::core::werka::ports::{WerkaHomeLookup, WerkaPortError};
 
@@ -126,5 +126,55 @@ impl WerkaService {
         };
 
         lookup.werka_customers(query, limit, offset).await.map(Some)
+    }
+
+    pub async fn supplier_items(
+        &self,
+        supplier_ref: &str,
+        query: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Option<Vec<SupplierItem>>, WerkaPortError> {
+        let Some(lookup) = &self.lookup else {
+            return Ok(None);
+        };
+
+        lookup
+            .werka_supplier_items(supplier_ref, query, limit, offset)
+            .await
+            .map(Some)
+    }
+
+    pub async fn customer_items(
+        &self,
+        customer_ref: &str,
+        query: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Option<Vec<SupplierItem>>, WerkaPortError> {
+        let Some(lookup) = &self.lookup else {
+            return Ok(None);
+        };
+
+        lookup
+            .werka_customer_items(customer_ref, query, limit, offset)
+            .await
+            .map(Some)
+    }
+
+    pub async fn customer_item_options(
+        &self,
+        query: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Option<Vec<CustomerItemOption>>, WerkaPortError> {
+        let Some(lookup) = &self.lookup else {
+            return Ok(None);
+        };
+
+        lookup
+            .werka_customer_item_options(query, limit, offset)
+            .await
+            .map(Some)
     }
 }

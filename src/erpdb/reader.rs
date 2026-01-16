@@ -1,19 +1,20 @@
-use async_trait::async_trait;
 use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions};
 use sqlx::{MySqlPool, query_as};
 use time::Date;
 
 use crate::config::DirectDbConfig;
 use crate::core::werka::models::{
-    CustomerDirectoryEntry, DispatchRecord, SupplierDirectoryEntry, WerkaArchiveResponse,
-    WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry,
+    CustomerDirectoryEntry, CustomerItemOption, DispatchRecord, SupplierDirectoryEntry,
+    SupplierItem, WerkaArchiveResponse, WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry,
 };
-use crate::core::werka::ports::{WerkaHomeLookup, WerkaPortError};
 use crate::erpdb::werka_archive::read_werka_archive;
 use crate::erpdb::werka_customers::read_werka_customers;
 use crate::erpdb::werka_history::{SupplierAckRow, build_werka_history};
 use crate::erpdb::werka_home::{
     DeliveryNoteSummaryRow, PurchaseReceiptSummaryRow, build_werka_home,
+};
+use crate::erpdb::werka_items::{
+    read_werka_customer_item_options, read_werka_customer_items, read_werka_supplier_items,
 };
 use crate::erpdb::werka_pending::build_werka_pending;
 use crate::erpdb::werka_status_breakdown::build_werka_status_breakdown;
@@ -26,6 +27,7 @@ use crate::erpdb::werka_suppliers::read_werka_suppliers;
 #[derive(Clone)]
 pub struct DirectDbReader {
     pool: MySqlPool,
+    default_warehouse: String,
 }
 
 impl DirectDbReader {
@@ -40,10 +42,13 @@ impl DirectDbReader {
             .max_connections(12)
             .connect_lazy_with(options);
 
-        Self { pool }
+        Self {
+            pool,
+            default_warehouse: config.default_warehouse.trim().to_string(),
+        }
     }
 
-    async fn home(&self, pending_limit: usize) -> Result<WerkaHomeData, sqlx::Error> {
+    pub(crate) async fn home(&self, pending_limit: usize) -> Result<WerkaHomeData, sqlx::Error> {
         let receipts = query_as::<_, PurchaseReceiptSummaryRow>(PURCHASE_RECEIPT_ROWS_SQL)
             .fetch_all(&self.pool)
             .await?;
@@ -54,7 +59,7 @@ impl DirectDbReader {
         Ok(build_werka_home(&receipts, &delivery_notes, pending_limit))
     }
 
-    async fn summary(&self) -> Result<WerkaHomeSummary, sqlx::Error> {
+    pub(crate) async fn summary(&self) -> Result<WerkaHomeSummary, sqlx::Error> {
         let receipts = query_as::<_, PurchaseReceiptStatusRow>(PURCHASE_RECEIPT_STATUS_ROWS_SQL)
             .fetch_all(&self.pool)
             .await?;
@@ -65,7 +70,7 @@ impl DirectDbReader {
         Ok(build_werka_summary(&receipts, &delivery_notes))
     }
 
-    async fn pending(&self, limit: usize) -> Result<Vec<DispatchRecord>, sqlx::Error> {
+    pub(crate) async fn pending(&self, limit: usize) -> Result<Vec<DispatchRecord>, sqlx::Error> {
         let limit = clamp_limit(limit, 1000);
         let receipts = if limit > 0 {
             query_as::<_, PurchaseReceiptSummaryRow>(PENDING_PURCHASE_RECEIPT_ROWS_LIMIT_SQL)
@@ -94,7 +99,7 @@ impl DirectDbReader {
         Ok(build_werka_pending(&receipts, &delivery_notes, limit))
     }
 
-    async fn history(&self) -> Result<Vec<DispatchRecord>, sqlx::Error> {
+    pub(crate) async fn history(&self) -> Result<Vec<DispatchRecord>, sqlx::Error> {
         const RECENT_LIMIT: usize = 120;
         let receipts = query_as::<_, PurchaseReceiptSummaryRow>(PURCHASE_RECEIPT_ROWS_LIMIT_SQL)
             .bind(RECENT_LIMIT as i64)
@@ -117,7 +122,7 @@ impl DirectDbReader {
         ))
     }
 
-    async fn status_breakdown(
+    pub(crate) async fn status_breakdown(
         &self,
         kind: &str,
     ) -> Result<Vec<WerkaStatusBreakdownEntry>, sqlx::Error> {
@@ -135,7 +140,7 @@ impl DirectDbReader {
         ))
     }
 
-    async fn status_details(
+    pub(crate) async fn status_details(
         &self,
         kind: &str,
         supplier_ref: &str,
@@ -155,7 +160,7 @@ impl DirectDbReader {
         ))
     }
 
-    async fn archive(
+    pub(crate) async fn archive(
         &self,
         kind: &str,
         period: &str,
@@ -165,7 +170,7 @@ impl DirectDbReader {
         read_werka_archive(&self.pool, kind, period, from, to).await
     }
 
-    async fn suppliers(
+    pub(crate) async fn suppliers(
         &self,
         query: &str,
         limit: usize,
@@ -174,7 +179,7 @@ impl DirectDbReader {
         read_werka_suppliers(&self.pool, query, limit, offset).await
     }
 
-    async fn customers(
+    pub(crate) async fn customers(
         &self,
         query: &str,
         limit: usize,
@@ -182,85 +187,51 @@ impl DirectDbReader {
     ) -> Result<Vec<CustomerDirectoryEntry>, sqlx::Error> {
         read_werka_customers(&self.pool, query, limit, offset).await
     }
-}
 
-#[async_trait]
-impl WerkaHomeLookup for DirectDbReader {
-    async fn werka_summary(&self) -> Result<WerkaHomeSummary, WerkaPortError> {
-        self.summary()
-            .await
-            .map_err(|error| WerkaPortError::Database(error.to_string()))
-    }
-
-    async fn werka_home(&self, pending_limit: usize) -> Result<WerkaHomeData, WerkaPortError> {
-        self.home(pending_limit)
-            .await
-            .map_err(|error| WerkaPortError::Database(error.to_string()))
-    }
-
-    async fn werka_pending(&self, limit: usize) -> Result<Vec<DispatchRecord>, WerkaPortError> {
-        self.pending(limit)
-            .await
-            .map_err(|error| WerkaPortError::Database(error.to_string()))
-    }
-
-    async fn werka_history(&self) -> Result<Vec<DispatchRecord>, WerkaPortError> {
-        self.history()
-            .await
-            .map_err(|error| WerkaPortError::Database(error.to_string()))
-    }
-
-    async fn werka_status_breakdown(
+    pub(crate) async fn supplier_items(
         &self,
-        kind: &str,
-    ) -> Result<Vec<WerkaStatusBreakdownEntry>, WerkaPortError> {
-        self.status_breakdown(kind)
-            .await
-            .map_err(|error| WerkaPortError::Database(error.to_string()))
-    }
-
-    async fn werka_status_details(
-        &self,
-        kind: &str,
         supplier_ref: &str,
-    ) -> Result<Vec<DispatchRecord>, WerkaPortError> {
-        self.status_details(kind, supplier_ref)
-            .await
-            .map_err(|error| WerkaPortError::Database(error.to_string()))
+        query: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<SupplierItem>, sqlx::Error> {
+        read_werka_supplier_items(
+            &self.pool,
+            &self.default_warehouse,
+            supplier_ref,
+            query,
+            limit,
+            offset,
+        )
+        .await
     }
 
-    async fn werka_archive(
+    pub(crate) async fn customer_items(
         &self,
-        kind: &str,
-        period: &str,
-        from: Option<Date>,
-        to: Option<Date>,
-    ) -> Result<WerkaArchiveResponse, WerkaPortError> {
-        self.archive(kind, period, from, to)
-            .await
-            .map_err(|error| WerkaPortError::Database(error.to_string()))
+        customer_ref: &str,
+        query: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<SupplierItem>, sqlx::Error> {
+        read_werka_customer_items(
+            &self.pool,
+            &self.default_warehouse,
+            customer_ref,
+            query,
+            limit,
+            offset,
+        )
+        .await
     }
 
-    async fn werka_suppliers(
+    pub(crate) async fn customer_item_options(
         &self,
         query: &str,
         limit: usize,
         offset: usize,
-    ) -> Result<Vec<SupplierDirectoryEntry>, WerkaPortError> {
-        self.suppliers(query, limit, offset)
+    ) -> Result<Vec<CustomerItemOption>, sqlx::Error> {
+        read_werka_customer_item_options(&self.pool, &self.default_warehouse, query, limit, offset)
             .await
-            .map_err(|error| WerkaPortError::Database(error.to_string()))
-    }
-
-    async fn werka_customers(
-        &self,
-        query: &str,
-        limit: usize,
-        offset: usize,
-    ) -> Result<Vec<CustomerDirectoryEntry>, WerkaPortError> {
-        self.customers(query, limit, offset)
-            .await
-            .map_err(|error| WerkaPortError::Database(error.to_string()))
     }
 }
 

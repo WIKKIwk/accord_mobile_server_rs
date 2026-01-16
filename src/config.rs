@@ -111,6 +111,7 @@ impl AppConfig {
         if !self.direct_db_name.trim().is_empty() {
             config.name = self.direct_db_name.trim().to_string();
         }
+        config.default_warehouse = env_or("ERP_DEFAULT_TARGET_WAREHOUSE", "");
         Ok(Some(config))
     }
 }
@@ -122,6 +123,7 @@ pub struct DirectDbConfig {
     pub name: String,
     pub user: String,
     pub password: String,
+    pub default_warehouse: String,
 }
 
 impl DirectDbConfig {
@@ -148,6 +150,7 @@ impl DirectDbConfig {
             user: name.clone(),
             name,
             password: site.db_password.trim().to_string(),
+            default_warehouse: String::new(),
         })
     }
 }

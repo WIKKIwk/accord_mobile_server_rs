@@ -28,6 +28,18 @@ pub fn build_router(state: AppState) -> Router {
             any(werka::status_details),
         )
         .route("/v1/mobile/werka/summary", any(werka::summary))
+        .route(
+            "/v1/mobile/werka/customer-item-options",
+            any(werka::customer_item_options),
+        )
+        .route(
+            "/v1/mobile/werka/customer-items",
+            any(werka::customer_items),
+        )
+        .route(
+            "/v1/mobile/werka/supplier-items",
+            any(werka::supplier_items),
+        )
         .route("/v1/mobile/werka/customers", any(werka::customers))
         .route("/v1/mobile/werka/suppliers", any(werka::suppliers))
         .route("/v1/mobile/werka/home", any(werka::home))

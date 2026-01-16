@@ -8,8 +8,8 @@ use time::{Date, Month};
 use crate::app::AppState;
 use crate::core::auth::models::{Principal, PrincipalRole};
 use crate::core::werka::models::{
-    CustomerDirectoryEntry, DispatchRecord, SupplierDirectoryEntry, WerkaArchiveResponse,
-    WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry,
+    CustomerDirectoryEntry, CustomerItemOption, DispatchRecord, SupplierDirectoryEntry,
+    SupplierItem, WerkaArchiveResponse, WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry,
 };
 use crate::http::archive_pdf::build_archive_pdf;
 use crate::http::handlers::auth::{ErrorResponse, bearer_token};
@@ -35,6 +35,22 @@ pub struct ArchiveQuery {
 
 #[derive(Debug, Deserialize)]
 pub struct DirectoryQuery {
+    q: Option<String>,
+    limit: Option<String>,
+    offset: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SupplierItemsQuery {
+    supplier_ref: Option<String>,
+    q: Option<String>,
+    limit: Option<String>,
+    offset: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CustomerItemsQuery {
+    customer_ref: Option<String>,
     q: Option<String>,
     limit: Option<String>,
     offset: Option<String>,
@@ -79,6 +95,82 @@ pub async fn customers(
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
                 error: "werka customers failed",
+            }),
+        )),
+    }
+}
+
+pub async fn supplier_items(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<SupplierItemsQuery>,
+) -> Result<Json<Vec<SupplierItem>>, (StatusCode, Json<ErrorResponse>)> {
+    let principal = authorize(&state, &headers).await?;
+    require_werka(&principal)?;
+
+    let supplier_ref = query.supplier_ref.as_deref().unwrap_or("").trim();
+    let q = query.q.as_deref().unwrap_or("").trim();
+    let limit = optional_search_limit(query.limit.as_deref(), 100, 200);
+    let offset = optional_search_offset(query.offset.as_deref());
+    match state
+        .werka
+        .supplier_items(supplier_ref, q, limit, offset)
+        .await
+    {
+        Ok(Some(items)) => Ok(Json(items)),
+        Ok(None) | Err(_) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "werka supplier items failed",
+            }),
+        )),
+    }
+}
+
+pub async fn customer_items(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<CustomerItemsQuery>,
+) -> Result<Json<Vec<SupplierItem>>, (StatusCode, Json<ErrorResponse>)> {
+    let principal = authorize(&state, &headers).await?;
+    require_werka(&principal)?;
+
+    let customer_ref = query.customer_ref.as_deref().unwrap_or("").trim();
+    let q = query.q.as_deref().unwrap_or("").trim();
+    let limit = optional_search_limit(query.limit.as_deref(), 100, 200);
+    let offset = optional_search_offset(query.offset.as_deref());
+    match state
+        .werka
+        .customer_items(customer_ref, q, limit, offset)
+        .await
+    {
+        Ok(Some(items)) => Ok(Json(items)),
+        Ok(None) | Err(_) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "werka customer items failed",
+            }),
+        )),
+    }
+}
+
+pub async fn customer_item_options(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<DirectoryQuery>,
+) -> Result<Json<Vec<CustomerItemOption>>, (StatusCode, Json<ErrorResponse>)> {
+    let principal = authorize(&state, &headers).await?;
+    require_werka(&principal)?;
+
+    let q = query.q.as_deref().unwrap_or("").trim();
+    let limit = optional_search_limit(query.limit.as_deref(), 200, 200);
+    let offset = optional_search_offset(query.offset.as_deref());
+    match state.werka.customer_item_options(q, limit, offset).await {
+        Ok(Some(items)) => Ok(Json(items)),
+        Ok(None) | Err(_) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "werka customer item options failed",
             }),
         )),
     }
