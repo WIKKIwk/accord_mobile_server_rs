@@ -141,6 +141,13 @@ pub struct WerkaCustomerIssueCreateInput {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct WerkaCustomerIssueBatchCreateRequest {
+    pub client_batch_id: String,
+    #[serde(default)]
+    pub lines: Vec<WerkaCustomerIssueCreateRequest>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct WerkaCustomerIssueRecord {
     pub entry_id: String,
     pub customer_ref: String,
@@ -150,6 +157,24 @@ pub struct WerkaCustomerIssueRecord {
     pub uom: String,
     pub qty: f64,
     pub created_label: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct WerkaCustomerIssueBatchLineResult {
+    pub line_index: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record: Option<WerkaCustomerIssueRecord>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub error: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub error_code: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct WerkaCustomerIssueBatchResult {
+    pub client_batch_id: String,
+    pub created: Vec<WerkaCustomerIssueBatchLineResult>,
+    pub failed: Vec<WerkaCustomerIssueBatchLineResult>,
 }
 
 fn is_zero(value: &f64) -> bool {

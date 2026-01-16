@@ -5,7 +5,8 @@ use time::{Date, OffsetDateTime};
 
 use crate::core::werka::models::{
     CustomerDirectoryEntry, CustomerItemOption, DispatchRecord, SupplierDirectoryEntry,
-    SupplierItem, WerkaArchiveResponse, WerkaCustomerIssueCreateInput, WerkaCustomerIssueRecord,
+    SupplierItem, WerkaArchiveResponse, WerkaCustomerIssueBatchLineResult,
+    WerkaCustomerIssueBatchResult, WerkaCustomerIssueCreateInput, WerkaCustomerIssueRecord,
     WerkaCustomerIssueSource, WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry,
 };
 use crate::core::werka::ports::{
@@ -287,6 +288,52 @@ impl WerkaService {
             qty: input.qty,
             created_label: current_timestamp_label(),
         }))
+    }
+
+    pub async fn create_customer_issue_batch(
+        &self,
+        client_batch_id: &str,
+        lines: Vec<WerkaCustomerIssueCreateInput>,
+    ) -> Result<Option<WerkaCustomerIssueBatchResult>, WerkaPortError> {
+        if self.customer_issue_writer.is_none() {
+            return Ok(None);
+        }
+
+        let mut created = Vec::new();
+        let mut failed = Vec::new();
+        for (index, line) in lines.into_iter().enumerate() {
+            match self.create_customer_issue(line).await {
+                Ok(Some(record)) => created.push(WerkaCustomerIssueBatchLineResult {
+                    line_index: index,
+                    record: Some(record),
+                    ..WerkaCustomerIssueBatchLineResult::default()
+                }),
+                Ok(None) => failed.push(default_batch_failure(index)),
+                Err(WerkaPortError::InsufficientStock) => {
+                    failed.push(WerkaCustomerIssueBatchLineResult {
+                        line_index: index,
+                        error: "insufficient stock".to_string(),
+                        error_code: "insufficient_stock".to_string(),
+                        ..WerkaCustomerIssueBatchLineResult::default()
+                    });
+                }
+                Err(_) => failed.push(default_batch_failure(index)),
+            }
+        }
+
+        Ok(Some(WerkaCustomerIssueBatchResult {
+            client_batch_id: client_batch_id.trim().to_string(),
+            created,
+            failed,
+        }))
+    }
+}
+
+fn default_batch_failure(index: usize) -> WerkaCustomerIssueBatchLineResult {
+    WerkaCustomerIssueBatchLineResult {
+        line_index: index,
+        error: "werka customer issue create failed".to_string(),
+        ..WerkaCustomerIssueBatchLineResult::default()
     }
 }
 

@@ -9,9 +9,10 @@ use crate::app::AppState;
 use crate::core::auth::models::{Principal, PrincipalRole};
 use crate::core::werka::models::{
     CustomerDirectoryEntry, CustomerItemOption, DispatchRecord, SupplierDirectoryEntry,
-    SupplierItem, WerkaArchiveResponse, WerkaCustomerIssueCreateInput,
-    WerkaCustomerIssueCreateRequest, WerkaCustomerIssueRecord, WerkaCustomerIssueSource,
-    WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry,
+    SupplierItem, WerkaArchiveResponse, WerkaCustomerIssueBatchCreateRequest,
+    WerkaCustomerIssueBatchResult, WerkaCustomerIssueCreateInput, WerkaCustomerIssueCreateRequest,
+    WerkaCustomerIssueRecord, WerkaCustomerIssueSource, WerkaHomeData, WerkaHomeSummary,
+    WerkaStatusBreakdownEntry,
 };
 use crate::core::werka::ports::WerkaPortError;
 use crate::http::archive_pdf::build_archive_pdf;
@@ -98,16 +99,7 @@ pub async fn customer_issue_create(
 
     match state
         .werka
-        .create_customer_issue(WerkaCustomerIssueCreateInput {
-            customer_ref: request.customer_ref,
-            item_code: request.item_code,
-            qty: request.qty,
-            source: WerkaCustomerIssueSource {
-                barcode: request.source_barcode,
-                stock_entry_name: request.source_stock_entry,
-                line_index: request.source_line_index,
-            },
-        })
+        .create_customer_issue(customer_issue_input_from_request(request))
         .await
     {
         Ok(Some(record)) => Ok(Json(record)),
@@ -132,6 +124,62 @@ pub async fn customer_issue_create(
     }
 }
 
+pub async fn customer_issue_batch_create(
+    State(state): State<AppState>,
+    method: Method,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<WerkaCustomerIssueBatchResult>, (StatusCode, Json<IssueErrorResponse>)> {
+    if method != Method::POST {
+        return Err((
+            StatusCode::METHOD_NOT_ALLOWED,
+            Json(IssueErrorResponse {
+                error: "method not allowed",
+                error_code: None,
+            }),
+        ));
+    }
+    let principal = authorize(&state, &headers)
+        .await
+        .map_err(issue_auth_error)?;
+    require_werka(&principal).map_err(issue_auth_error)?;
+
+    let request: WerkaCustomerIssueBatchCreateRequest =
+        serde_json::from_slice(&body).map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(IssueErrorResponse {
+                    error: "invalid json",
+                    error_code: None,
+                }),
+            )
+        })?;
+    if request.lines.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(IssueErrorResponse {
+                error: "lines are required",
+                error_code: None,
+            }),
+        ));
+    }
+
+    let client_batch_id = request.client_batch_id;
+    let lines = request
+        .lines
+        .into_iter()
+        .map(customer_issue_batch_input_from_request)
+        .collect();
+    match state
+        .werka
+        .create_customer_issue_batch(&client_batch_id, lines)
+        .await
+    {
+        Ok(Some(result)) => Ok(Json(result)),
+        Ok(None) | Err(_) => Err(customer_issue_create_failed()),
+    }
+}
+
 pub async fn suppliers(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -151,6 +199,32 @@ pub async fn suppliers(
                 error: "werka suppliers failed",
             }),
         )),
+    }
+}
+
+fn customer_issue_input_from_request(
+    request: WerkaCustomerIssueCreateRequest,
+) -> WerkaCustomerIssueCreateInput {
+    WerkaCustomerIssueCreateInput {
+        customer_ref: request.customer_ref,
+        item_code: request.item_code,
+        qty: request.qty,
+        source: WerkaCustomerIssueSource {
+            barcode: request.source_barcode,
+            stock_entry_name: request.source_stock_entry,
+            line_index: request.source_line_index,
+        },
+    }
+}
+
+fn customer_issue_batch_input_from_request(
+    request: WerkaCustomerIssueCreateRequest,
+) -> WerkaCustomerIssueCreateInput {
+    WerkaCustomerIssueCreateInput {
+        customer_ref: request.customer_ref,
+        item_code: request.item_code,
+        qty: request.qty,
+        source: WerkaCustomerIssueSource::default(),
     }
 }
 

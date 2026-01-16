@@ -20,6 +20,10 @@ pub fn build_router(state: AppState) -> Router {
             "/v1/mobile/werka/customer-issue/create",
             any(werka::customer_issue_create),
         )
+        .route(
+            "/v1/mobile/werka/customer-issue/batch-create",
+            any(werka::customer_issue_batch_create),
+        )
         .route("/v1/mobile/werka/history", any(werka::history))
         .route("/v1/mobile/werka/notifications", any(werka::history))
         .route("/v1/mobile/werka/pending", any(werka::pending))

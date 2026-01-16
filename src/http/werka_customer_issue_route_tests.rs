@@ -174,6 +174,101 @@ async fn customer_issue_create_maps_negative_stock_to_conflict() {
     assert_eq!(value["error_code"], "insufficient_stock");
 }
 
+#[tokio::test]
+async fn customer_issue_batch_create_rejects_empty_lines_like_go() {
+    let state = test_state();
+    let token = werka_session(&state).await;
+    let response = build_router(state)
+        .oneshot(batch_request(
+            &token,
+            r#"{"client_batch_id":"batch-1","lines":[]}"#,
+        ))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(json_body(response).await["error"], "lines are required");
+}
+
+#[tokio::test]
+async fn customer_issue_batch_create_rejects_non_post_like_go() {
+    let state = test_state();
+    let token = werka_session(&state).await;
+    let response = build_router(state)
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/mobile/werka/customer-issue/batch-create")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(json_body(response).await["error"], "method not allowed");
+}
+
+#[tokio::test]
+async fn customer_issue_batch_create_rejects_invalid_json_like_go() {
+    let state = test_state();
+    let token = werka_session(&state).await;
+    let response = build_router(state)
+        .oneshot(batch_request(&token, "{"))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(json_body(response).await["error"], "invalid json");
+}
+
+#[tokio::test]
+async fn customer_issue_batch_create_returns_created_lines_like_go() {
+    let mut state = test_state();
+    state.werka =
+        WerkaService::new().with_customer_issue_writer(Arc::new(FakeIssueWriter::batch_ok()));
+    let token = werka_session(&state).await;
+
+    let response = build_router(state)
+        .oneshot(batch_request(
+            &token,
+            r#"{"client_batch_id":" batch-1 ","lines":[{"customer_ref":"CUST-001","item_code":"ITEM-001","qty":2}]}"#,
+        ))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let value = json_body(response).await;
+    assert_eq!(value["client_batch_id"], "batch-1");
+    assert_eq!(value["created"][0]["line_index"], 0);
+    assert_eq!(value["created"][0]["record"]["entry_id"], "DN-ITEM-001");
+    assert_eq!(value["failed"].as_array().expect("failed").len(), 0);
+}
+
+#[tokio::test]
+async fn customer_issue_batch_create_keeps_partial_failures_in_body_like_go() {
+    let mut state = test_state();
+    state.werka =
+        WerkaService::new().with_customer_issue_writer(Arc::new(FakeIssueWriter::batch_partial()));
+    let token = werka_session(&state).await;
+
+    let response = build_router(state)
+        .oneshot(batch_request(
+            &token,
+            r#"{"client_batch_id":"batch-2","lines":[{"customer_ref":"CUST-001","item_code":"ITEM-001","qty":2},{"customer_ref":"CUST-001","item_code":"ITEM-FAIL","qty":3}]}"#,
+        ))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let value = json_body(response).await;
+    assert_eq!(value["created"][0]["line_index"], 0);
+    assert_eq!(value["failed"][0]["line_index"], 1);
+    assert_eq!(value["failed"][0]["error"], "insufficient stock");
+    assert_eq!(value["failed"][0]["error_code"], "insufficient_stock");
+}
+
 fn request_body() -> &'static str {
     r#"{"customer_ref":"CUST-001","item_code":"ITEM-001","qty":2,"source_barcode":"30AD3353F0C879E4801AD4DF","source_stock_entry":"MAT-STE-2026-00572","source_line_index":1}"#
 }
@@ -182,6 +277,16 @@ fn create_request(token: &str, body: &str) -> Request<Body> {
     Request::builder()
         .method("POST")
         .uri("/v1/mobile/werka/customer-issue/create")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .expect("request")
+}
+
+fn batch_request(token: &str, body: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri("/v1/mobile/werka/customer-issue/batch-create")
         .header(header::AUTHORIZATION, format!("Bearer {token}"))
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(body.to_string()))
@@ -215,28 +320,48 @@ enum FakeIssueMode {
     Ok,
     Duplicate,
     InsufficientStock,
+    BatchOk,
+    BatchPartial,
 }
 
 struct FakeIssueWriter {
     mode: FakeIssueMode,
+    require_source: bool,
 }
 
 impl FakeIssueWriter {
     fn ok() -> Self {
         Self {
             mode: FakeIssueMode::Ok,
+            require_source: true,
         }
     }
 
     fn duplicate() -> Self {
         Self {
             mode: FakeIssueMode::Duplicate,
+            require_source: true,
         }
     }
 
     fn insufficient_stock() -> Self {
         Self {
             mode: FakeIssueMode::InsufficientStock,
+            require_source: true,
+        }
+    }
+
+    fn batch_ok() -> Self {
+        Self {
+            mode: FakeIssueMode::BatchOk,
+            require_source: false,
+        }
+    }
+
+    fn batch_partial() -> Self {
+        Self {
+            mode: FakeIssueMode::BatchPartial,
+            require_source: false,
         }
     }
 }
@@ -244,10 +369,10 @@ impl FakeIssueWriter {
 #[async_trait]
 impl WerkaCustomerIssueWriter for FakeIssueWriter {
     async fn get_items_by_codes(&self, codes: &[String]) -> Result<Vec<ErpItem>, WerkaPortError> {
-        assert_eq!(codes, &["ITEM-001".to_string()]);
+        assert_eq!(codes.len(), 1);
         Ok(vec![ErpItem {
-            code: "ITEM-001".to_string(),
-            name: "Item 001".to_string(),
+            code: codes[0].clone(),
+            name: format!("{} name", codes[0]),
             uom: "Kg".to_string(),
         }])
     }
@@ -265,10 +390,12 @@ impl WerkaCustomerIssueWriter for FakeIssueWriter {
         _customer_ref: &str,
         marker: &str,
     ) -> Result<bool, WerkaPortError> {
-        assert!(marker.contains("accord_customer_issue_source:"));
-        assert!(marker.contains("source_barcode=30AD3353F0C879E4801AD4DF"));
-        assert!(marker.contains("source_stock_entry=MAT-STE-2026-00572"));
-        assert!(marker.contains("source_line_index=1"));
+        if self.require_source {
+            assert!(marker.contains("accord_customer_issue_source:"));
+            assert!(marker.contains("source_barcode=30AD3353F0C879E4801AD4DF"));
+            assert!(marker.contains("source_stock_entry=MAT-STE-2026-00572"));
+            assert!(marker.contains("source_line_index=1"));
+        }
         Ok(matches!(self.mode, FakeIssueMode::Duplicate))
     }
 
@@ -277,10 +404,15 @@ impl WerkaCustomerIssueWriter for FakeIssueWriter {
         input: CreateDeliveryNoteInput,
     ) -> Result<String, WerkaPortError> {
         assert_eq!(input.customer, "CUST-001");
-        assert_eq!(input.item_code, "ITEM-001");
-        assert_eq!(input.qty, 2.0);
-        assert!(input.source_key.contains("source_line_index=1"));
-        Ok("DN-001".to_string())
+        if self.require_source {
+            assert_eq!(input.item_code, "ITEM-001");
+            assert_eq!(input.qty, 2.0);
+            assert!(input.source_key.contains("source_line_index=1"));
+            Ok("DN-001".to_string())
+        } else {
+            assert!(input.source_key.is_empty());
+            Ok(format!("DN-{}", input.item_code))
+        }
     }
 
     async fn update_delivery_note_state(
@@ -288,7 +420,9 @@ impl WerkaCustomerIssueWriter for FakeIssueWriter {
         name: &str,
         update: DeliveryNoteStateUpdate,
     ) -> Result<(), WerkaPortError> {
-        assert_eq!(name, "DN-001");
+        if self.require_source {
+            assert_eq!(name, "DN-001");
+        }
         assert_eq!(update.flow_state, "1");
         assert_eq!(update.customer_state, "1");
         assert_eq!(update.delivery_actor, "1");
@@ -297,8 +431,12 @@ impl WerkaCustomerIssueWriter for FakeIssueWriter {
     }
 
     async fn submit_delivery_note(&self, name: &str) -> Result<(), WerkaPortError> {
-        assert_eq!(name, "DN-001");
-        if matches!(self.mode, FakeIssueMode::InsufficientStock) {
+        if self.require_source {
+            assert_eq!(name, "DN-001");
+        }
+        if matches!(self.mode, FakeIssueMode::InsufficientStock)
+            || (matches!(self.mode, FakeIssueMode::BatchPartial) && name == "DN-ITEM-FAIL")
+        {
             Err(WerkaPortError::InsufficientStock)
         } else {
             Ok(())
@@ -306,7 +444,9 @@ impl WerkaCustomerIssueWriter for FakeIssueWriter {
     }
 
     async fn delete_delivery_note(&self, name: &str) -> Result<(), WerkaPortError> {
-        assert_eq!(name, "DN-001");
+        if self.require_source {
+            assert_eq!(name, "DN-001");
+        }
         Ok(())
     }
 }
