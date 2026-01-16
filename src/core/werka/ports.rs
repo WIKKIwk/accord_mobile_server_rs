@@ -128,6 +128,13 @@ pub struct WerkaSupplierRecord {
     pub phone: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WerkaSupplierAdminState {
+    pub blocked: bool,
+    pub removed: bool,
+    pub assigned_item_codes: Vec<String>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CreatePurchaseReceiptInput {
     pub supplier: String,
@@ -206,6 +213,14 @@ pub trait WerkaUnannouncedWriter: Send + Sync {
         name: &str,
         content: &str,
     ) -> Result<(), WerkaPortError>;
+}
+
+#[async_trait]
+pub trait WerkaSupplierAdminStateLookup: Send + Sync {
+    async fn werka_supplier_admin_state(
+        &self,
+        supplier_ref: &str,
+    ) -> Result<WerkaSupplierAdminState, WerkaPortError>;
 }
 
 #[async_trait]

@@ -6,3 +6,5 @@ pub mod service;
 #[cfg(test)]
 mod service_tests;
 mod unannounced;
+#[cfg(test)]
+mod unannounced_tests;

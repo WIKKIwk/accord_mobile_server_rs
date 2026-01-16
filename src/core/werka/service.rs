@@ -12,11 +12,11 @@ use crate::core::werka::models::{
 use crate::core::werka::ports::{
     CreateDeliveryNoteInput, CreatePurchaseReceiptInput, CustomerIssueSourceLookup,
     DeliveryNoteStateUpdate, WerkaCustomerIssueWriter, WerkaHomeLookup, WerkaPortError,
-    WerkaUnannouncedWriter,
+    WerkaSupplierAdminStateLookup, WerkaUnannouncedWriter,
 };
 use crate::core::werka::unannounced::{
-    format_notification_comment, purchase_receipt_to_dispatch_record,
-    upsert_werka_unannounced_in_remarks,
+    format_notification_comment, purchase_receipt_to_dispatch_record, supplier_admin_state,
+    upsert_werka_unannounced_in_remarks, validate_unannounced_supplier_item,
 };
 
 const DELIVERY_FLOW_STATE_SUBMITTED: i32 = 1;
@@ -30,6 +30,7 @@ pub struct WerkaService {
     customer_issue_writer: Option<Arc<dyn WerkaCustomerIssueWriter>>,
     customer_issue_source_lookup: Option<Arc<dyn CustomerIssueSourceLookup>>,
     unannounced_writer: Option<Arc<dyn WerkaUnannouncedWriter>>,
+    supplier_admin_state_lookup: Option<Arc<dyn WerkaSupplierAdminStateLookup>>,
 }
 
 impl WerkaService {
@@ -61,6 +62,14 @@ impl WerkaService {
     #[allow(dead_code)]
     pub fn with_unannounced_writer(mut self, writer: Arc<dyn WerkaUnannouncedWriter>) -> Self {
         self.unannounced_writer = Some(writer);
+        self
+    }
+
+    pub fn with_supplier_admin_state_lookup(
+        mut self,
+        lookup: Arc<dyn WerkaSupplierAdminStateLookup>,
+    ) -> Self {
+        self.supplier_admin_state_lookup = Some(lookup);
         self
     }
 
@@ -352,9 +361,21 @@ impl WerkaService {
         };
 
         let supplier = writer.find_supplier_for_werka(supplier_ref).await?;
-        writer
-            .validate_supplier_item_allowed(&supplier.id, item_code)
-            .await?;
+        let supplier_state =
+            supplier_admin_state(self.supplier_admin_state_lookup.as_ref(), &supplier.id).await?;
+        if supplier_state.removed || supplier_state.blocked {
+            return Err(WerkaPortError::WriteFailed(
+                "invalid supplier credentials".to_string(),
+            ));
+        }
+        validate_unannounced_supplier_item(
+            self.lookup.as_ref(),
+            writer.as_ref(),
+            &supplier.id,
+            item_code,
+            &supplier_state,
+        )
+        .await?;
         let warehouse = writer.resolve_warehouse().await?;
         let mut draft = writer
             .create_draft_purchase_receipt(CreatePurchaseReceiptInput {

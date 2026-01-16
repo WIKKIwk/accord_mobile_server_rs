@@ -29,6 +29,9 @@ impl AppState {
         );
 
         if config.erp_configured() {
+            let admin_state_store = Arc::new(AdminSupplierStateStore::new(
+                config.admin_supplier_store_path.clone(),
+            ));
             let erp_client = Arc::new(
                 ErpnextClient::new(
                     config.erp_url.clone(),
@@ -38,22 +41,13 @@ impl AppState {
                 )
                 .with_default_warehouse(config.default_target_warehouse.clone()),
             );
-            auth = auth.with_supplier_dependencies(
-                erp_client.clone(),
-                Arc::new(AdminSupplierStateStore::new(
-                    config.admin_supplier_store_path.clone(),
-                )),
-            );
-            auth = auth.with_customer_dependencies(
-                erp_client.clone(),
-                Arc::new(AdminSupplierStateStore::new(
-                    config.admin_supplier_store_path.clone(),
-                )),
-            );
+            auth = auth.with_supplier_dependencies(erp_client.clone(), admin_state_store.clone());
+            auth = auth.with_customer_dependencies(erp_client.clone(), admin_state_store.clone());
             profiles = profiles.with_erp_lookup(erp_client.clone());
             werka = werka
                 .with_customer_issue_writer(erp_client.clone())
-                .with_unannounced_writer(erp_client);
+                .with_unannounced_writer(erp_client)
+                .with_supplier_admin_state_lookup(admin_state_store);
         }
         match config.direct_db_config() {
             Ok(Some(db_config)) => {

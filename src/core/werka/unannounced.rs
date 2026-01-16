@@ -1,5 +1,10 @@
+use std::sync::Arc;
+
 use crate::core::werka::models::DispatchRecord;
-use crate::core::werka::ports::PurchaseReceiptDraft;
+use crate::core::werka::ports::{
+    PurchaseReceiptDraft, WerkaHomeLookup, WerkaPortError, WerkaSupplierAdminState,
+    WerkaSupplierAdminStateLookup, WerkaUnannouncedWriter,
+};
 
 const WERKA_UNANNOUNCED_PREFIX: &str = "Accord Werka Aytilmagan:";
 const WERKA_UNANNOUNCED_REASON_PREFIX: &str = "Accord Werka Aytilmagan Sabab:";
@@ -90,6 +95,65 @@ pub(crate) fn format_notification_comment(
         format!("{}\n{}", label.trim(), message.trim())
     } else {
         format!("{} • {}\n{}", label.trim(), name, message.trim())
+    }
+}
+
+pub(crate) fn assigned_codes_allow_item(assigned_item_codes: &[String], item_code: &str) -> bool {
+    assigned_item_codes
+        .iter()
+        .any(|code| code.trim().eq_ignore_ascii_case(item_code.trim()))
+}
+
+pub(crate) fn item_supplier_permission_denied(error: &WerkaPortError) -> bool {
+    match error {
+        WerkaPortError::WriteFailed(message) | WerkaPortError::Database(message) => {
+            let lower = message.to_lowercase();
+            lower.contains("permissionerror") || lower.contains("status 403:")
+        }
+        _ => false,
+    }
+}
+
+pub(crate) async fn supplier_admin_state(
+    lookup: Option<&Arc<dyn WerkaSupplierAdminStateLookup>>,
+    supplier_ref: &str,
+) -> Result<WerkaSupplierAdminState, WerkaPortError> {
+    let Some(lookup) = lookup else {
+        return Ok(WerkaSupplierAdminState::default());
+    };
+    lookup.werka_supplier_admin_state(supplier_ref).await
+}
+
+pub(crate) async fn validate_unannounced_supplier_item(
+    lookup: Option<&Arc<dyn WerkaHomeLookup>>,
+    writer: &dyn WerkaUnannouncedWriter,
+    supplier_ref: &str,
+    item_code: &str,
+    state: &WerkaSupplierAdminState,
+) -> Result<(), WerkaPortError> {
+    if let Some(lookup) = lookup {
+        if let Ok(items) = lookup.werka_supplier_items(supplier_ref, "", 200, 0).await {
+            if items
+                .iter()
+                .any(|item| item.code.trim().eq_ignore_ascii_case(item_code.trim()))
+            {
+                return Ok(());
+            }
+        }
+    }
+
+    match writer
+        .validate_supplier_item_allowed(supplier_ref, item_code)
+        .await
+    {
+        Ok(()) => Ok(()),
+        Err(error)
+            if item_supplier_permission_denied(&error)
+                && assigned_codes_allow_item(&state.assigned_item_codes, item_code) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(error),
     }
 }
 
