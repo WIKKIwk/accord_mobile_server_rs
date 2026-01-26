@@ -4,6 +4,8 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use serde::Deserialize;
 
+use crate::core::admin::models::AdminState;
+use crate::core::admin::ports::{AdminPortError, AdminStatePort};
 use crate::core::auth::ports::{AdminAccessState, AdminAccessStateLookup, AuthPortError};
 use crate::core::werka::ports::{
     WerkaPortError, WerkaSupplierAdminState, WerkaSupplierAdminStateLookup,
@@ -18,6 +20,31 @@ pub struct AdminSupplierStateStore {
 impl AdminSupplierStateStore {
     pub fn new(path: PathBuf) -> Self {
         Self { path }
+    }
+}
+
+#[async_trait]
+impl AdminStatePort for AdminSupplierStateStore {
+    async fn states(&self) -> Result<BTreeMap<String, AdminState>, AdminPortError> {
+        let raw: BTreeMap<String, AdminSupplierStateRecord> = json_file::read_map(&self.path)
+            .await
+            .map_err(|_| AdminPortError::LookupFailed)?;
+
+        Ok(raw
+            .into_iter()
+            .map(|(key, value)| {
+                (
+                    key,
+                    AdminState {
+                        custom_code: value.custom_code,
+                        blocked: value.blocked,
+                        removed: value.removed,
+                        assigned_item_codes: value.assigned_item_codes,
+                        cooldown_until: value.cooldown_until,
+                    },
+                )
+            })
+            .collect())
     }
 }
 
@@ -74,6 +101,8 @@ struct AdminSupplierStateRecord {
     removed: bool,
     #[serde(default)]
     assigned_item_codes: Vec<String>,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    cooldown_until: Option<time::OffsetDateTime>,
 }
 
 #[cfg(test)]

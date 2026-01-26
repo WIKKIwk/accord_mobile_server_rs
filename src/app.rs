@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::ai::werka_search::WerkaAiSearchService;
 use crate::config::AppConfig;
+use crate::core::admin::service::AdminService;
 use crate::core::auth::service::AuthService;
 use crate::core::customer::service::CustomerService;
 use crate::core::profile::service::ProfileService;
@@ -18,6 +19,7 @@ use crate::store::push_token_store::PushTokenStore;
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<AppConfig>,
+    pub admin: AdminService,
     pub auth: AuthService,
     pub customer: CustomerService,
     pub profiles: ProfileService,
@@ -29,6 +31,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(config: AppConfig) -> Self {
         let mut auth = AuthService::new(&config);
+        let mut admin = AdminService::new(&config);
         let mut customer = CustomerService::new();
         let profile_store = Arc::new(ProfileStore::new(config.profile_store_path.clone()));
         let push_token_store = Arc::new(PushTokenStore::new(config.push_token_store_path.clone()));
@@ -62,6 +65,9 @@ impl AppState {
                 )
                 .with_default_warehouse(config.default_target_warehouse.clone()),
             );
+            admin = admin
+                .with_read_port(erp_client.clone())
+                .with_state_port(admin_state_store.clone());
             auth = auth.with_supplier_dependencies(erp_client.clone(), admin_state_store.clone());
             auth = auth.with_customer_dependencies(erp_client.clone(), admin_state_store.clone());
             customer = customer.with_delivery_port(erp_client.clone());
@@ -99,6 +105,7 @@ impl AppState {
 
         Self {
             config: Arc::new(config),
+            admin,
             auth,
             customer,
             profiles,

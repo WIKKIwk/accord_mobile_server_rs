@@ -5,7 +5,7 @@ use serde::Serialize;
 use tower_http::trace::TraceLayer;
 
 use crate::app::AppState;
-use crate::http::handlers::{auth, customer, notifications, profile, push, supplier, werka};
+use crate::http::handlers::{admin, auth, customer, notifications, profile, push, supplier, werka};
 
 pub fn build_router(state: AppState) -> Router {
     Router::new()
@@ -98,6 +98,34 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/mobile/werka/customers", any(werka::customers))
         .route("/v1/mobile/werka/suppliers", any(werka::suppliers))
         .route("/v1/mobile/werka/home", any(werka::home))
+        .route("/v1/mobile/admin/settings", any(admin::settings))
+        .route("/v1/mobile/admin/suppliers", any(admin::suppliers))
+        .route("/v1/mobile/admin/suppliers/list", any(admin::supplier_list))
+        .route(
+            "/v1/mobile/admin/suppliers/summary",
+            any(admin::supplier_summary),
+        )
+        .route(
+            "/v1/mobile/admin/suppliers/detail",
+            any(admin::supplier_detail),
+        )
+        .route(
+            "/v1/mobile/admin/suppliers/inactive",
+            any(admin::inactive_suppliers),
+        )
+        .route(
+            "/v1/mobile/admin/suppliers/items/assigned",
+            any(admin::assigned_supplier_items),
+        )
+        .route("/v1/mobile/admin/customers", any(admin::customers))
+        .route("/v1/mobile/admin/customers/list", any(admin::customer_list))
+        .route(
+            "/v1/mobile/admin/customers/detail",
+            any(admin::customer_detail),
+        )
+        .route("/v1/mobile/admin/items", any(admin::items))
+        .route("/v1/mobile/admin/item-groups", any(admin::item_groups))
+        .route("/v1/mobile/admin/activity", any(admin::activity))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
