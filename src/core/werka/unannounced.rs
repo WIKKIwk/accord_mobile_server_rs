@@ -45,7 +45,14 @@ pub(crate) fn purchase_receipt_to_dispatch_record(
     let sent_qty = parse_telegram_receipt_marker_qty(&draft.supplier_delivery_note)
         .filter(|marker_qty| *marker_qty > draft.qty)
         .unwrap_or(draft.qty);
-    let status = if draft.doc_status == 0 && unannounced_state == "rejected" {
+    let (accepted_from_note, returned_from_note) =
+        extract_accord_decision_quantities(&draft.remarks);
+    let status = if draft.doc_status == 0
+        && (unannounced_state == "rejected"
+            || (accepted_from_note <= 0.0
+                && returned_from_note >= sent_qty
+                && returned_from_note > 0.0))
+    {
         "cancelled"
     } else if draft.doc_status == 2 || draft.status.trim().eq_ignore_ascii_case("Cancelled") {
         "cancelled"
@@ -64,7 +71,7 @@ pub(crate) fn purchase_receipt_to_dispatch_record(
     if status == "pending" {
         accepted_qty = 0.0;
     }
-    let mut note = String::new();
+    let mut note = extract_accord_decision_note(&draft.remarks);
     if draft.doc_status == 0 && unannounced_state == "pending" {
         note = "Werka siz qayd etmagan mahsulotni qabul qildi. Tasdiqlash kutilmoqda.".to_string();
     }
@@ -241,6 +248,57 @@ pub(crate) fn extract_werka_unannounced_reason(remarks: &str) -> String {
         }
     }
     String::new()
+}
+
+fn extract_accord_decision_note(remarks: &str) -> String {
+    remarks
+        .replace("\r\n", "\n")
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| {
+            line.strip_prefix("Accord Qabul:")
+                .map(|value| format!("Qabul: {}", value.trim()))
+                .or_else(|| {
+                    line.strip_prefix("Accord Qaytarildi:")
+                        .map(|value| format!("Qaytarildi: {}", value.trim()))
+                })
+                .or_else(|| {
+                    line.strip_prefix("Accord Sabab:")
+                        .map(|value| format!("Sabab: {}", value.trim()))
+                })
+                .or_else(|| {
+                    line.strip_prefix("Accord Izoh:")
+                        .map(|value| format!("Izoh: {}", value.trim()))
+                })
+                .or_else(|| {
+                    line.strip_prefix("Accord Supplier Tasdiq:")
+                        .map(|value| format!("Supplier tasdiqladi: {}", value.trim()))
+                })
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn extract_accord_decision_quantities(remarks: &str) -> (f64, f64) {
+    let mut accepted_qty = 0.0;
+    let mut returned_qty = 0.0;
+    for line in remarks.replace("\r\n", "\n").lines() {
+        let trimmed = line.trim();
+        if let Some(value) = trimmed.strip_prefix("Accord Qabul:") {
+            accepted_qty = first_float(value);
+        } else if let Some(value) = trimmed.strip_prefix("Accord Qaytarildi:") {
+            returned_qty = first_float(value);
+        }
+    }
+    (accepted_qty, returned_qty)
+}
+
+fn first_float(value: &str) -> f64 {
+    value
+        .split_whitespace()
+        .next()
+        .and_then(|field| field.parse().ok())
+        .unwrap_or(0.0)
 }
 
 fn parse_notification_comment(content: &str) -> Option<(String, String)> {

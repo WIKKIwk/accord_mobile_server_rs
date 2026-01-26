@@ -10,7 +10,7 @@ use crate::app::AppState;
 use crate::config::AppConfig;
 use crate::core::auth::models::{Principal, PrincipalRole};
 use crate::core::session::manager::SessionManager;
-use crate::core::werka::models::SupplierHomeSummary;
+use crate::core::werka::models::{DispatchRecord, SupplierHomeSummary};
 use crate::core::werka::ports::{SupplierReadLookup, WerkaPortError};
 use crate::core::werka::service::WerkaService;
 
@@ -94,10 +94,63 @@ async fn supplier_summary_fails_without_provider_like_go() {
     );
 }
 
+#[tokio::test]
+async fn supplier_history_accepts_post_like_go() {
+    let mut state = test_state();
+    state.werka = WerkaService::new().with_supplier_read_lookup(Arc::new(FakeSupplierRead));
+    let token = supplier_session(&state).await;
+
+    let response = build_router(state)
+        .oneshot(request_to("POST", "/v1/mobile/supplier/history", &token))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let value = json_body(response).await;
+    assert_eq!(value[0]["id"], "PR-001");
+    assert_eq!(value[0]["status"], "partial");
+}
+
+#[tokio::test]
+async fn supplier_history_forbids_non_supplier_like_go() {
+    let mut state = test_state();
+    state.werka = WerkaService::new().with_supplier_read_lookup(Arc::new(FakeSupplierRead));
+    let token = werka_session(&state).await;
+
+    let response = build_router(state)
+        .oneshot(request_to("GET", "/v1/mobile/supplier/history", &token))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(json_body(response).await["error"], "forbidden");
+}
+
+#[tokio::test]
+async fn supplier_history_fails_without_provider_like_go() {
+    let state = test_state();
+    let token = supplier_session(&state).await;
+
+    let response = build_router(state)
+        .oneshot(request_to("GET", "/v1/mobile/supplier/history", &token))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        json_body(response).await["error"],
+        "supplier history failed"
+    );
+}
+
 fn request(method: &str, token: &str) -> Request<Body> {
+    request_to(method, "/v1/mobile/supplier/summary", token)
+}
+
+fn request_to(method: &str, uri: &str, token: &str) -> Request<Body> {
     Request::builder()
         .method(method)
-        .uri("/v1/mobile/supplier/summary")
+        .uri(uri)
         .header(header::AUTHORIZATION, format!("Bearer {token}"))
         .body(Body::empty())
         .expect("request")
@@ -154,5 +207,26 @@ impl SupplierReadLookup for FakeSupplierRead {
             submitted_count: 1,
             returned_count: 3,
         })
+    }
+
+    async fn supplier_history(
+        &self,
+        supplier_ref: &str,
+    ) -> Result<Vec<DispatchRecord>, WerkaPortError> {
+        assert_eq!(supplier_ref, "SUP-001");
+        Ok(vec![DispatchRecord {
+            id: "PR-001".to_string(),
+            record_type: "purchase_receipt".to_string(),
+            supplier_ref: "SUP-001".to_string(),
+            supplier_name: "Supplier".to_string(),
+            item_code: "ITEM-001".to_string(),
+            item_name: "Item".to_string(),
+            uom: "Nos".to_string(),
+            sent_qty: 5.0,
+            accepted_qty: 3.0,
+            status: "partial".to_string(),
+            created_label: "2026-01-26".to_string(),
+            ..DispatchRecord::default()
+        }])
     }
 }

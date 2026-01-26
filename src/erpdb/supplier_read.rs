@@ -1,10 +1,12 @@
 use async_trait::async_trait;
 use sqlx::query_as;
 
-use crate::core::werka::models::SupplierHomeSummary;
+use crate::core::werka::models::{DispatchRecord, SupplierHomeSummary};
 use crate::core::werka::ports::{SupplierReadLookup, WerkaPortError};
 use crate::erpdb::reader::DirectDbReader;
-use crate::erpdb::werka_home::{PurchaseReceiptSummaryRow, classify_werka_receipt};
+use crate::erpdb::werka_home::{
+    PurchaseReceiptSummaryRow, classify_werka_receipt, purchase_receipt_to_record,
+};
 use crate::erpdb::werka_lookup::database_error;
 
 #[async_trait]
@@ -20,6 +22,18 @@ impl SupplierReadLookup for DirectDbReader {
             .map_err(database_error)?;
         Ok(build_supplier_summary(&rows))
     }
+
+    async fn supplier_history(
+        &self,
+        supplier_ref: &str,
+    ) -> Result<Vec<DispatchRecord>, WerkaPortError> {
+        let rows = query_as::<_, PurchaseReceiptSummaryRow>(SUPPLIER_PURCHASE_RECEIPT_ROWS_SQL)
+            .bind(supplier_ref.trim())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(database_error)?;
+        Ok(build_supplier_history(&rows))
+    }
 }
 
 fn build_supplier_summary(rows: &[PurchaseReceiptSummaryRow]) -> SupplierHomeSummary {
@@ -34,6 +48,18 @@ fn build_supplier_summary(rows: &[PurchaseReceiptSummaryRow]) -> SupplierHomeSum
         }
     }
     summary
+}
+
+fn build_supplier_history(rows: &[PurchaseReceiptSummaryRow]) -> Vec<DispatchRecord> {
+    let mut result = Vec::with_capacity(rows.len());
+    for row in rows {
+        let (_, include) = classify_werka_receipt(row);
+        if include {
+            result.push(purchase_receipt_to_record(row));
+        }
+    }
+    result.sort_by(|left, right| right.created_label.cmp(&left.created_label));
+    result
 }
 
 const SUPPLIER_PURCHASE_RECEIPT_ROWS_SQL: &str = r#"
@@ -61,7 +87,7 @@ const SUPPLIER_PURCHASE_RECEIPT_ROWS_SQL: &str = r#"
 
 #[cfg(test)]
 mod tests {
-    use super::build_supplier_summary;
+    use super::{build_supplier_history, build_supplier_summary};
     use crate::erpdb::werka_home::PurchaseReceiptSummaryRow;
 
     #[test]
@@ -85,6 +111,23 @@ mod tests {
         assert_eq!(summary.pending_count, 2);
         assert_eq!(summary.submitted_count, 1);
         assert_eq!(summary.returned_count, 2);
+    }
+
+    #[test]
+    fn supplier_history_filters_hidden_unannounced_and_sorts_like_go_reader() {
+        let mut pending = receipt("PR-PENDING", 0, "To Bill", 5.0, "");
+        pending.posting_date = "2026-01-26".to_string();
+        let mut hidden = receipt("PR-HIDDEN", 0, "To Bill", 5.0, "");
+        hidden.posting_date = "2026-01-27".to_string();
+        hidden.remarks = "Accord Werka Aytilmagan: pending".to_string();
+        let mut accepted = receipt("PR-ACCEPTED", 1, "Completed", 5.0, "");
+        accepted.posting_date = "2026-01-28".to_string();
+
+        let items = build_supplier_history(&[pending, hidden, accepted]);
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].id, "PR-ACCEPTED");
+        assert_eq!(items[1].id, "PR-PENDING");
     }
 
     fn receipt(

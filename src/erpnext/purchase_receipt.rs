@@ -5,12 +5,13 @@ use serde_json::Value;
 use time::OffsetDateTime;
 
 use crate::core::werka::ports::{
-    CreatePurchaseReceiptInput, PurchaseReceiptDraft, SupplierPurchaseReceiptLookup,
-    WerkaPortError, WerkaSupplierRecord, WerkaUnannouncedWriter,
+    CreatePurchaseReceiptInput, PurchaseReceiptDraft, WerkaPortError, WerkaSupplierRecord,
+    WerkaUnannouncedWriter,
 };
 use crate::erpnext::client::ErpnextClient;
 
 mod response;
+mod supplier_read;
 
 #[async_trait]
 impl WerkaUnannouncedWriter for ErpnextClient {
@@ -163,43 +164,6 @@ impl WerkaUnannouncedWriter for ErpnextClient {
             })),
         )
         .await
-    }
-}
-
-#[async_trait]
-impl SupplierPurchaseReceiptLookup for ErpnextClient {
-    async fn list_supplier_purchase_receipts_page(
-        &self,
-        supplier_ref: &str,
-        limit: usize,
-        offset: usize,
-    ) -> Result<Vec<PurchaseReceiptDraft>, WerkaPortError> {
-        let page_limit = if limit == 0 || limit > 500 {
-            100
-        } else {
-            limit
-        };
-        let filters = serde_json::json!([
-            ["supplier", "=", supplier_ref.trim()],
-            ["supplier_delivery_note", "like", "TG:%"],
-        ]);
-        let mut query = vec![
-            (
-                "fields",
-                r#"["name","supplier","supplier_name","posting_date","supplier_delivery_note","status","docstatus","currency","remarks","items"]"#.to_string(),
-            ),
-            ("filters", filters.to_string()),
-            ("limit_page_length", page_limit.to_string()),
-            ("order_by", "modified desc".to_string()),
-        ];
-        if offset > 0 {
-            query.push(("limit_start", offset.to_string()));
-        }
-
-        let payload: ListResponse<Value> = self
-            .purchase_get_json("/api/resource/Purchase Receipt", &query)
-            .await?;
-        payload.data.into_iter().map(map_purchase_receipt).collect()
     }
 }
 

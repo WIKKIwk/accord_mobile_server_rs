@@ -1,8 +1,11 @@
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
 
-use super::ports::{PurchaseReceiptDraft, SupplierPurchaseReceiptLookup, WerkaPortError};
+use super::ports::{
+    PurchaseReceiptComment, PurchaseReceiptDraft, SupplierPurchaseReceiptLookup, WerkaPortError,
+};
 use super::service::WerkaService;
 
 #[tokio::test]
@@ -10,6 +13,7 @@ async fn supplier_summary_counts_erp_receipt_statuses_like_go_fallback() {
     let service = WerkaService::new().with_supplier_purchase_receipt_lookup(std::sync::Arc::new(
         FakeSupplierReceipts {
             calls: Mutex::new(Vec::new()),
+            comments_calls: Mutex::new(Vec::new()),
             receipts: vec![
                 receipt(
                     "PR-PENDING",
@@ -55,8 +59,48 @@ async fn supplier_summary_counts_erp_receipt_statuses_like_go_fallback() {
     assert_eq!(summary.returned_count, 2);
 }
 
+#[tokio::test]
+async fn supplier_history_adds_supplier_ack_note_only_for_records_that_need_scan() {
+    let service = WerkaService::new().with_supplier_purchase_receipt_lookup(std::sync::Arc::new(
+        FakeSupplierReceipts {
+            calls: Mutex::new(Vec::new()),
+            comments_calls: Mutex::new(Vec::new()),
+            receipts: vec![
+                receipt(
+                    "PR-CLEAN",
+                    0,
+                    "To Bill",
+                    5.0,
+                    "TG:+998:20260126090000:5.0000",
+                ),
+                receipt(
+                    "PR-PARTIAL",
+                    1,
+                    "Completed",
+                    3.0,
+                    "TG:+998:20260126090001:5.0000",
+                ),
+            ],
+        },
+    ));
+
+    let items = service
+        .supplier_history("SUP-001", "Supplier")
+        .await
+        .expect("history result")
+        .expect("history");
+
+    assert_eq!(items.len(), 2);
+    assert!(items[0].note.is_empty());
+    assert_eq!(
+        items[1].note,
+        "Supplier tasdiqladi: Tasdiqlayman, shu holat bo‘lganini ko‘rdim."
+    );
+}
+
 struct FakeSupplierReceipts {
     calls: Mutex<Vec<(usize, usize)>>,
+    comments_calls: Mutex<Vec<Vec<String>>>,
     receipts: Vec<PurchaseReceiptDraft>,
 }
 
@@ -70,6 +114,30 @@ impl SupplierPurchaseReceiptLookup for FakeSupplierReceipts {
     ) -> Result<Vec<PurchaseReceiptDraft>, WerkaPortError> {
         self.calls.lock().expect("calls").push((limit, offset));
         Ok(self.receipts.clone())
+    }
+
+    async fn list_supplier_purchase_receipt_comments_batch(
+        &self,
+        names: &[String],
+        _limit: usize,
+    ) -> Result<HashMap<String, Vec<PurchaseReceiptComment>>, WerkaPortError> {
+        self.comments_calls
+            .lock()
+            .expect("comments calls")
+            .push(names.to_vec());
+        let mut result = HashMap::new();
+        for name in names {
+            result.insert(
+                name.clone(),
+                vec![PurchaseReceiptComment {
+                    id: "COMM-001".to_string(),
+                    content: "Supplier • Supplier\nTasdiqlayman, shu holat bo‘lganini ko‘rdim."
+                        .to_string(),
+                    created_at: "2026-01-26 09:00:00".to_string(),
+                }],
+            );
+        }
+        Ok(result)
     }
 }
 

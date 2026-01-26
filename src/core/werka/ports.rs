@@ -94,6 +94,10 @@ pub trait SupplierReadLookup: Send + Sync {
         &self,
         supplier_ref: &str,
     ) -> Result<SupplierHomeSummary, WerkaPortError>;
+    async fn supplier_history(
+        &self,
+        supplier_ref: &str,
+    ) -> Result<Vec<DispatchRecord>, WerkaPortError>;
 }
 
 #[async_trait]
@@ -104,6 +108,11 @@ pub trait SupplierPurchaseReceiptLookup: Send + Sync {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<PurchaseReceiptDraft>, WerkaPortError>;
+    async fn list_supplier_purchase_receipt_comments_batch(
+        &self,
+        names: &[String],
+        limit: usize,
+    ) -> Result<std::collections::HashMap<String, Vec<PurchaseReceiptComment>>, WerkaPortError>;
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
