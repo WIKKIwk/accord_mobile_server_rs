@@ -27,6 +27,10 @@ pub fn build_router(state: AppState) -> Router {
             "/v1/mobile/supplier/status-breakdown",
             any(supplier::status_breakdown),
         )
+        .route(
+            "/v1/mobile/supplier/status-details",
+            any(supplier::status_details),
+        )
         .route("/v1/mobile/supplier/summary", any(supplier::summary))
         .route(
             "/v1/mobile/supplier/unannounced/respond",

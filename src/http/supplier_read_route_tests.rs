@@ -213,6 +213,70 @@ async fn supplier_status_breakdown_fails_without_erp_provider_like_go() {
     );
 }
 
+#[tokio::test]
+async fn supplier_status_details_accepts_post_and_filters_item_like_go() {
+    let mut state = test_state();
+    state.werka = WerkaService::new()
+        .with_supplier_purchase_receipt_lookup(Arc::new(FakeSupplierReceiptLookup));
+    let token = supplier_session(&state).await;
+
+    let response = build_router(state)
+        .oneshot(request_to(
+            "POST",
+            "/v1/mobile/supplier/status-details?kind=submitted&item_code=item-001",
+            &token,
+        ))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let value = json_body(response).await;
+    assert_eq!(value.as_array().expect("array").len(), 2);
+    assert_eq!(value[0]["id"], "PR-001");
+    assert_eq!(value[1]["id"], "PR-002");
+}
+
+#[tokio::test]
+async fn supplier_status_details_forbids_non_supplier_like_go() {
+    let mut state = test_state();
+    state.werka = WerkaService::new()
+        .with_supplier_purchase_receipt_lookup(Arc::new(FakeSupplierReceiptLookup));
+    let token = werka_session(&state).await;
+
+    let response = build_router(state)
+        .oneshot(request_to(
+            "GET",
+            "/v1/mobile/supplier/status-details?kind=submitted&item_code=ITEM-001",
+            &token,
+        ))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(json_body(response).await["error"], "forbidden");
+}
+
+#[tokio::test]
+async fn supplier_status_details_fails_without_erp_provider_like_go() {
+    let state = test_state();
+    let token = supplier_session(&state).await;
+
+    let response = build_router(state)
+        .oneshot(request_to(
+            "GET",
+            "/v1/mobile/supplier/status-details?kind=submitted&item_code=ITEM-001",
+            &token,
+        ))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        json_body(response).await["error"],
+        "supplier status details failed"
+    );
+}
+
 fn request(method: &str, token: &str) -> Request<Body> {
     request_to(method, "/v1/mobile/supplier/summary", token)
 }

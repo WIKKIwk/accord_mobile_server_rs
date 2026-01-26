@@ -70,6 +70,26 @@ impl WerkaService {
             kind,
         )))
     }
+
+    pub async fn supplier_status_details(
+        &self,
+        supplier_ref: &str,
+        supplier_display_name: &str,
+        kind: &str,
+        item_code: &str,
+    ) -> Result<Option<Vec<DispatchRecord>>, WerkaPortError> {
+        let Some(lookup) = &self.supplier_purchase_receipt_lookup else {
+            return Ok(None);
+        };
+
+        let receipts = collect_supplier_purchase_receipts(lookup.as_ref(), supplier_ref).await?;
+        Ok(Some(build_supplier_status_details_from_receipts(
+            receipts,
+            supplier_display_name,
+            kind,
+            item_code,
+        )))
+    }
 }
 
 async fn collect_supplier_purchase_receipts(
@@ -211,6 +231,27 @@ fn build_supplier_status_breakdown_from_receipts(
                 .cmp(&right.item_name.to_lowercase())
         })
     });
+    result
+}
+
+fn build_supplier_status_details_from_receipts(
+    receipts: Vec<PurchaseReceiptDraft>,
+    supplier_display_name: &str,
+    kind: &str,
+    item_code: &str,
+) -> Vec<DispatchRecord> {
+    let needle = item_code.trim();
+    let mut result = Vec::with_capacity(receipts.len());
+    for receipt in receipts {
+        let record = purchase_receipt_to_dispatch_record(receipt, supplier_display_name);
+        if !record_matches_supplier_breakdown(&record, kind) {
+            continue;
+        }
+        if !needle.is_empty() && !record.item_code.trim().eq_ignore_ascii_case(needle) {
+            continue;
+        }
+        result.push(record);
+    }
     result
 }
 

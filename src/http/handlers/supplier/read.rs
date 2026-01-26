@@ -78,7 +78,38 @@ pub async fn status_breakdown(
     }
 }
 
+pub async fn status_details(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<SupplierStatusDetailsQuery>,
+) -> Result<Json<Vec<DispatchRecord>>, (StatusCode, Json<ErrorResponse>)> {
+    let principal = authorize(&state, &headers).await?;
+    require_supplier(&principal)?;
+
+    let kind = query.kind.as_deref().unwrap_or("").trim();
+    let item_code = query.item_code.as_deref().unwrap_or("").trim();
+    match state
+        .werka
+        .supplier_status_details(&principal.ref_, &principal.display_name, kind, item_code)
+        .await
+    {
+        Ok(Some(items)) => Ok(Json(items)),
+        Ok(None) | Err(_) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "supplier status details failed",
+            }),
+        )),
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SupplierStatusBreakdownQuery {
     pub kind: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SupplierStatusDetailsQuery {
+    pub kind: Option<String>,
+    pub item_code: Option<String>,
 }
