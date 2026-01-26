@@ -374,6 +374,7 @@ impl WerkaCustomerIssueWriter for FakeIssueWriter {
             code: codes[0].clone(),
             name: format!("{} name", codes[0]),
             uom: "Kg".to_string(),
+            item_group: String::new(),
         }])
     }
 

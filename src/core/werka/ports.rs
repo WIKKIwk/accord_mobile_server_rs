@@ -115,11 +115,25 @@ pub trait SupplierPurchaseReceiptLookup: Send + Sync {
     ) -> Result<std::collections::HashMap<String, Vec<PurchaseReceiptComment>>, WerkaPortError>;
 }
 
+#[async_trait]
+pub trait SupplierItemLookup: Send + Sync {
+    async fn list_assigned_supplier_items(
+        &self,
+        supplier_ref: &str,
+        limit: usize,
+    ) -> Result<Vec<SupplierItem>, WerkaPortError>;
+    async fn get_supplier_items_by_codes(
+        &self,
+        item_codes: &[String],
+    ) -> Result<Vec<SupplierItem>, WerkaPortError>;
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ErpItem {
     pub code: String,
     pub name: String,
     pub uom: String,
+    pub item_group: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]

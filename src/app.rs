@@ -58,6 +58,7 @@ impl AppState {
                 .with_unannounced_writer(erp_client.clone())
                 .with_supplier_unannounced_writer(erp_client.clone())
                 .with_supplier_purchase_receipt_lookup(erp_client.clone())
+                .with_supplier_item_lookup(erp_client.clone())
                 .with_confirm_writer(erp_client.clone())
                 .with_notification_detail_writer(erp_client.clone())
                 .with_supplier_admin_state_lookup(admin_state_store);

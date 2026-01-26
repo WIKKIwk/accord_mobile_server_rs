@@ -4,9 +4,11 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 
 use super::ports::{
-    PurchaseReceiptComment, PurchaseReceiptDraft, SupplierPurchaseReceiptLookup, WerkaPortError,
+    PurchaseReceiptComment, PurchaseReceiptDraft, SupplierItemLookup,
+    SupplierPurchaseReceiptLookup, WerkaPortError,
 };
 use super::service::WerkaService;
+use crate::core::werka::models::SupplierItem;
 
 #[tokio::test]
 async fn supplier_summary_counts_erp_receipt_statuses_like_go_fallback() {
@@ -183,10 +185,101 @@ async fn supplier_status_details_filters_kind_and_item_code_like_go() {
     assert!(items.iter().all(|item| item.status == "accepted"));
 }
 
+#[tokio::test]
+async fn supplier_items_filters_query_and_limits_like_go() {
+    let service = WerkaService::new().with_supplier_item_lookup(std::sync::Arc::new(
+        FakeSupplierItemLookup {
+            list_error: None,
+            assigned: vec![
+                supplier_item("ITEM-MILK", "Fresh Milk"),
+                supplier_item("ITEM-BREAD", "Bread"),
+                supplier_item("ITEM-MILK-2", "Milk 2"),
+            ],
+            fallback: Vec::new(),
+        },
+    ));
+
+    let items = service
+        .supplier_mobile_items("SUP-001", "milk", 1)
+        .await
+        .expect("items result")
+        .expect("items");
+
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].code, "ITEM-MILK");
+}
+
+#[tokio::test]
+async fn supplier_items_uses_assigned_codes_on_permission_error_like_go() {
+    let service = WerkaService::new()
+        .with_supplier_item_lookup(std::sync::Arc::new(FakeSupplierItemLookup {
+            list_error: Some("PermissionError: no access".to_string()),
+            assigned: Vec::new(),
+            fallback: vec![supplier_item("ITEM-FALLBACK", "Fallback")],
+        }))
+        .with_supplier_admin_state_lookup(std::sync::Arc::new(FakeSupplierState));
+
+    let items = service
+        .supplier_mobile_items("SUP-001", "", 20)
+        .await
+        .expect("items result")
+        .expect("items");
+
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].code, "ITEM-FALLBACK");
+}
+
 struct FakeSupplierReceipts {
     calls: Mutex<Vec<(usize, usize)>>,
     comments_calls: Mutex<Vec<Vec<String>>>,
     receipts: Vec<PurchaseReceiptDraft>,
+}
+
+struct FakeSupplierItemLookup {
+    list_error: Option<String>,
+    assigned: Vec<SupplierItem>,
+    fallback: Vec<SupplierItem>,
+}
+
+#[async_trait]
+impl SupplierItemLookup for FakeSupplierItemLookup {
+    async fn list_assigned_supplier_items(
+        &self,
+        supplier_ref: &str,
+        limit: usize,
+    ) -> Result<Vec<SupplierItem>, WerkaPortError> {
+        assert_eq!(supplier_ref, "SUP-001");
+        assert!(limit <= 20);
+        if let Some(error) = &self.list_error {
+            Err(WerkaPortError::WriteFailed(error.clone()))
+        } else {
+            Ok(self.assigned.clone())
+        }
+    }
+
+    async fn get_supplier_items_by_codes(
+        &self,
+        item_codes: &[String],
+    ) -> Result<Vec<SupplierItem>, WerkaPortError> {
+        assert_eq!(item_codes, ["ITEM-FALLBACK"]);
+        Ok(self.fallback.clone())
+    }
+}
+
+struct FakeSupplierState;
+
+#[async_trait]
+impl super::ports::WerkaSupplierAdminStateLookup for FakeSupplierState {
+    async fn werka_supplier_admin_state(
+        &self,
+        supplier_ref: &str,
+    ) -> Result<super::ports::WerkaSupplierAdminState, WerkaPortError> {
+        assert_eq!(supplier_ref, "SUP-001");
+        Ok(super::ports::WerkaSupplierAdminState {
+            assigned_item_codes: vec!["ITEM-FALLBACK".to_string()],
+            ..Default::default()
+        })
+    }
 }
 
 #[async_trait]
@@ -246,5 +339,15 @@ fn receipt(
         qty,
         uom: "Nos".to_string(),
         ..PurchaseReceiptDraft::default()
+    }
+}
+
+fn supplier_item(code: &str, name: &str) -> SupplierItem {
+    SupplierItem {
+        code: code.to_string(),
+        name: name.to_string(),
+        uom: "Nos".to_string(),
+        warehouse: "Stores - CH".to_string(),
+        item_group: String::new(),
     }
 }

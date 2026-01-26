@@ -43,6 +43,7 @@ impl WerkaCustomerIssueWriter for ErpnextClient {
                     row.item_name.trim().to_string()
                 },
                 uom: row.stock_uom.trim().to_string(),
+                item_group: row.item_group.trim().to_string(),
             })
             .collect())
     }
@@ -370,6 +371,8 @@ struct ItemRow {
     item_name: String,
     #[serde(default)]
     stock_uom: String,
+    #[serde(default)]
+    item_group: String,
 }
 
 #[derive(Debug, Deserialize)]

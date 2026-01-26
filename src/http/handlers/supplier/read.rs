@@ -6,7 +6,7 @@ use serde::Deserialize;
 use super::authz::{authorize, require_supplier};
 use crate::app::AppState;
 use crate::core::werka::models::{
-    DispatchRecord, SupplierHomeSummary, SupplierStatusBreakdownEntry,
+    DispatchRecord, SupplierHomeSummary, SupplierItem, SupplierStatusBreakdownEntry,
 };
 use crate::http::handlers::auth::ErrorResponse;
 
@@ -103,6 +103,30 @@ pub async fn status_details(
     }
 }
 
+pub async fn items(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<SupplierItemsQuery>,
+) -> Result<Json<Vec<SupplierItem>>, (StatusCode, Json<ErrorResponse>)> {
+    let principal = authorize(&state, &headers).await?;
+    require_supplier(&principal)?;
+
+    let q = query.q.as_deref().unwrap_or("").trim();
+    match state
+        .werka
+        .supplier_mobile_items(&principal.ref_, q, 20)
+        .await
+    {
+        Ok(Some(items)) => Ok(Json(items)),
+        Ok(None) | Err(_) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "supplier items failed",
+            }),
+        )),
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SupplierStatusBreakdownQuery {
     pub kind: Option<String>,
@@ -112,4 +136,9 @@ pub struct SupplierStatusBreakdownQuery {
 pub struct SupplierStatusDetailsQuery {
     pub kind: Option<String>,
     pub item_code: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SupplierItemsQuery {
+    pub q: Option<String>,
 }

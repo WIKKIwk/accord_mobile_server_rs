@@ -1,13 +1,15 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::core::werka::models::{
-    DispatchRecord, SupplierHomeSummary, SupplierStatusBreakdownEntry,
+    DispatchRecord, SupplierHomeSummary, SupplierItem, SupplierStatusBreakdownEntry,
 };
 use crate::core::werka::ports::{
     PurchaseReceiptComment, PurchaseReceiptDraft, SupplierPurchaseReceiptLookup, WerkaPortError,
 };
 use crate::core::werka::service::WerkaService;
-use crate::core::werka::unannounced::purchase_receipt_to_dispatch_record;
+use crate::core::werka::unannounced::{
+    item_supplier_permission_denied, purchase_receipt_to_dispatch_record,
+};
 
 const SUPPLIER_RECEIPT_PAGE_SIZE: usize = 200;
 
@@ -89,6 +91,99 @@ impl WerkaService {
             kind,
             item_code,
         )))
+    }
+
+    pub async fn supplier_mobile_items(
+        &self,
+        supplier_ref: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Option<Vec<SupplierItem>>, WerkaPortError> {
+        let state = if let Some(lookup) = &self.supplier_admin_state_lookup {
+            lookup.werka_supplier_admin_state(supplier_ref).await?
+        } else {
+            Default::default()
+        };
+        if state.removed || state.blocked {
+            return Ok(Some(Vec::new()));
+        }
+        if self.lookup.is_none() && self.supplier_item_lookup.is_none() {
+            return Ok(None);
+        }
+
+        let mut items = self
+            .admin_assigned_items(supplier_ref, &state.assigned_item_codes, limit)
+            .await?;
+        if !query.trim().is_empty() {
+            items = filter_supplier_items_by_query(items, query);
+        }
+        if limit > 0 && items.len() > limit {
+            items.truncate(limit);
+        }
+        Ok(Some(items))
+    }
+
+    async fn admin_assigned_items(
+        &self,
+        supplier_ref: &str,
+        assigned_item_codes: &[String],
+        limit: usize,
+    ) -> Result<Vec<SupplierItem>, WerkaPortError> {
+        if let Some(lookup) = &self.lookup {
+            let mut result = Vec::with_capacity(200);
+            let mut offset = 0;
+            loop {
+                let page_limit = if limit > 0 {
+                    let remaining = limit.saturating_sub(result.len());
+                    if remaining == 0 {
+                        break;
+                    }
+                    remaining.min(200)
+                } else {
+                    200
+                };
+                match lookup
+                    .werka_supplier_items(supplier_ref, "", page_limit, offset)
+                    .await
+                {
+                    Ok(page) => {
+                        let page_len = page.len();
+                        result.extend(page);
+                        if page_len < page_limit {
+                            return Ok(limit_supplier_items(result, limit));
+                        }
+                        if limit > 0 && result.len() >= limit {
+                            return Ok(limit_supplier_items(result, limit));
+                        }
+                        offset += page_limit;
+                    }
+                    Err(_) => break,
+                }
+            }
+            if !result.is_empty() {
+                return Ok(limit_supplier_items(result, limit));
+            }
+        }
+
+        let Some(lookup) = &self.supplier_item_lookup else {
+            return Ok(Vec::new());
+        };
+        match lookup
+            .list_assigned_supplier_items(supplier_ref, limit)
+            .await
+        {
+            Ok(items) => Ok(items),
+            Err(error) if item_supplier_permission_denied(&error) => {
+                if assigned_item_codes.is_empty() {
+                    Ok(Vec::new())
+                } else {
+                    lookup
+                        .get_supplier_items_by_codes(assigned_item_codes)
+                        .await
+                }
+            }
+            Err(error) => Err(error),
+        }
     }
 }
 
@@ -310,4 +405,26 @@ fn sanitize_notification_comment(content: &str) -> String {
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn filter_supplier_items_by_query(items: Vec<SupplierItem>, query: &str) -> Vec<SupplierItem> {
+    let lower_query = query.trim().to_lowercase();
+    if lower_query.is_empty() {
+        return items;
+    }
+
+    items
+        .into_iter()
+        .filter(|item| {
+            item.code.to_lowercase().contains(&lower_query)
+                || item.name.to_lowercase().contains(&lower_query)
+        })
+        .collect()
+}
+
+fn limit_supplier_items(mut items: Vec<SupplierItem>, limit: usize) -> Vec<SupplierItem> {
+    if limit > 0 && items.len() > limit {
+        items.truncate(limit);
+    }
+    items
 }
