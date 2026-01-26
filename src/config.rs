@@ -1,7 +1,9 @@
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::core::admin::ports::{AdminEnvPersister, AdminPortError};
 use crate::error::AppError;
 
 #[derive(Debug, Clone)]
@@ -133,6 +135,7 @@ pub struct DirectDbConfig {
     pub name: String,
     pub user: String,
     pub password: String,
+    pub encryption_key: String,
     pub default_warehouse: String,
 }
 
@@ -160,6 +163,7 @@ impl DirectDbConfig {
             user: name.clone(),
             name,
             password: site.db_password.trim().to_string(),
+            encryption_key: site.encryption_key.trim().to_string(),
             default_warehouse: String::new(),
         })
     }
@@ -173,6 +177,75 @@ struct SiteConfig {
     db_password: String,
     #[serde(default)]
     db_type: String,
+    #[serde(default)]
+    encryption_key: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct DotEnvPersister {
+    path: PathBuf,
+    lock: Arc<Mutex<()>>,
+}
+
+impl DotEnvPersister {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        let path = path.into();
+        let path = if path.as_os_str().is_empty() {
+            PathBuf::from(".env")
+        } else {
+            path
+        };
+        Self {
+            path,
+            lock: Arc::new(Mutex::new(())),
+        }
+    }
+}
+
+impl AdminEnvPersister for DotEnvPersister {
+    fn upsert(
+        &self,
+        values: std::collections::BTreeMap<&'static str, String>,
+    ) -> Result<(), AdminPortError> {
+        let _guard = self.lock.lock().map_err(|_| AdminPortError::LookupFailed)?;
+        let mut current = std::collections::BTreeMap::new();
+        if self.path.exists() {
+            let iter =
+                dotenvy::from_path_iter(&self.path).map_err(|_| AdminPortError::LookupFailed)?;
+            for item in iter {
+                let (key, value) = item.map_err(|_| AdminPortError::LookupFailed)?;
+                current.insert(key, value);
+            }
+        }
+        for (key, value) in values {
+            let key = key.trim();
+            if !key.is_empty() {
+                current.insert(key.to_string(), value.trim().to_string());
+            }
+        }
+        let mut body = String::new();
+        for (key, value) in current {
+            body.push_str(&key);
+            body.push('=');
+            body.push_str(&dotenv_value(&value));
+            body.push('\n');
+        }
+        std::fs::write(&self.path, body).map_err(|_| AdminPortError::LookupFailed)
+    }
+}
+
+fn dotenv_value(value: &str) -> String {
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '/' | ':' | '+'))
+    {
+        return value.to_string();
+    }
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n");
+    format!("\"{escaped}\"")
 }
 
 fn env_or(key: &str, fallback: &str) -> String {
@@ -199,7 +272,8 @@ fn parse_bind_addr(raw: &str) -> Result<SocketAddr, AppError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{DirectDbConfig, parse_bind_addr};
+    use super::{DirectDbConfig, DotEnvPersister, parse_bind_addr};
+    use crate::core::admin::ports::AdminEnvPersister;
 
     #[test]
     fn parses_go_style_bind_addr() {
@@ -225,5 +299,27 @@ mod tests {
         assert_eq!(config.name, "_site1");
         assert_eq!(config.user, "_site1");
         assert_eq!(config.password, "secret");
+        assert_eq!(config.encryption_key, "");
+    }
+
+    #[test]
+    fn dotenv_persister_upserts_like_go() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(".env");
+        std::fs::write(&path, "ERP_URL=https://old.test\nERP_API_KEY=keep\n").expect("write env");
+        let persister = DotEnvPersister::new(&path);
+        persister
+            .upsert(std::collections::BTreeMap::from([
+                ("ERP_URL", "https://new.test".to_string()),
+                ("ERP_DEFAULT_TARGET_WAREHOUSE", "Stores - CH".to_string()),
+            ]))
+            .expect("upsert");
+        let loaded = dotenvy::from_path_iter(path)
+            .expect("read env")
+            .collect::<Result<std::collections::BTreeMap<_, _>, _>>()
+            .expect("parse env");
+        assert_eq!(loaded["ERP_URL"], "https://new.test");
+        assert_eq!(loaded["ERP_API_KEY"], "keep");
+        assert_eq!(loaded["ERP_DEFAULT_TARGET_WAREHOUSE"], "Stores - CH");
     }
 }

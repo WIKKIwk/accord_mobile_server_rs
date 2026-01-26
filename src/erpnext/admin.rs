@@ -128,10 +128,11 @@ impl AdminReadPort for ErpnextClient {
         }
         let payload: ListResponse<ItemRow> =
             self.admin_get_json("/api/resource/Item", &params).await?;
+        let warehouse = self.default_warehouse();
         Ok(payload
             .data
             .into_iter()
-            .map(|row| supplier_item(row, &self.default_warehouse))
+            .map(|row| supplier_item(row, &warehouse))
             .collect())
     }
 
@@ -165,10 +166,11 @@ impl AdminReadPort for ErpnextClient {
                 ],
             )
             .await?;
+        let warehouse = self.default_warehouse();
         Ok(payload
             .data
             .into_iter()
-            .map(|row| supplier_item(row, &self.default_warehouse))
+            .map(|row| supplier_item(row, &warehouse))
             .collect())
     }
 
@@ -491,7 +493,7 @@ impl AdminWritePort for ErpnextClient {
         let response: GetResponse<ItemRow> = self
             .admin_json_request(reqwest::Method::POST, "/api/resource/Item", payload)
             .await?;
-        Ok(supplier_item(response.data, &self.default_warehouse))
+        Ok(supplier_item(response.data, &self.default_warehouse()))
     }
 
     async fn update_item_group(
@@ -519,7 +521,7 @@ impl ErpnextClient {
     ) -> Result<T, AdminPortError> {
         let response = self
             .http
-            .get(format!("{}{}", self.base_url, path))
+            .get(format!("{}{}", self.base_url(), path))
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .query(query)
             .send()
@@ -547,7 +549,7 @@ impl ErpnextClient {
     ) -> Result<T, AdminPortError> {
         let response = self
             .http
-            .request(method, format!("{}{}", self.base_url, path))
+            .request(method, format!("{}{}", self.base_url(), path))
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .json(&payload)
             .send()
@@ -575,7 +577,7 @@ impl ErpnextClient {
     ) -> Result<(), AdminPortError> {
         let mut request = self
             .http
-            .request(method, format!("{}{}", self.base_url, path))
+            .request(method, format!("{}{}", self.base_url(), path))
             .header(reqwest::header::AUTHORIZATION, self.auth_header());
         if !payload.is_null() {
             request = request.json(&payload);

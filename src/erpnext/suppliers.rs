@@ -18,7 +18,7 @@ impl SupplierLookup for ErpnextClient {
         let limit = normalize_limit(limit);
         let mut request = self
             .http
-            .get(format!("{}/api/resource/Supplier", self.base_url))
+            .get(format!("{}/api/resource/Supplier", self.base_url()))
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .query(&[
                 (
@@ -65,7 +65,7 @@ impl ProfileLookup for ErpnextClient {
             .http
             .get(format!(
                 "{}/api/resource/Supplier/{}",
-                self.base_url,
+                self.base_url(),
                 urlencoding::encode(id.trim())
             ))
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
@@ -103,7 +103,7 @@ impl ProfileLookup for ErpnextClient {
         let endpoint = if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
             trimmed.to_string()
         } else {
-            format!("{}{}", self.base_url, trimmed)
+            format!("{}{}", self.base_url(), trimmed)
         };
         let response = self
             .http
@@ -161,7 +161,7 @@ impl ProfileLookup for ErpnextClient {
             .part("file", file_part);
         let payload = self
             .http
-            .post(format!("{}/api/method/upload_file", self.base_url))
+            .post(format!("{}/api/method/upload_file", self.base_url()))
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .header(reqwest::header::ACCEPT, "application/json")
             .multipart(form)
@@ -180,7 +180,7 @@ impl ProfileLookup for ErpnextClient {
         self.http
             .put(format!(
                 "{}/api/resource/Supplier/{}",
-                self.base_url,
+                self.base_url(),
                 urlencoding::encode(supplier_id)
             ))
             .header(reqwest::header::AUTHORIZATION, self.auth_header())

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::ai::werka_search::WerkaAiSearchService;
-use crate::config::AppConfig;
+use crate::config::{AppConfig, DotEnvPersister};
 use crate::core::admin::service::AdminService;
 use crate::core::auth::service::AuthService;
 use crate::core::customer::service::CustomerService;
@@ -31,7 +31,8 @@ pub struct AppState {
 impl AppState {
     pub fn new(config: AppConfig) -> Self {
         let mut auth = AuthService::new(&config);
-        let mut admin = AdminService::new(&config);
+        let mut admin =
+            AdminService::new(&config).with_env_persister(Arc::new(DotEnvPersister::new(".env")));
         let mut customer = CustomerService::new();
         let profile_store = Arc::new(ProfileStore::new(config.profile_store_path.clone()));
         let push_token_store = Arc::new(PushTokenStore::new(config.push_token_store_path.clone()));
@@ -68,6 +69,7 @@ impl AppState {
             admin = admin
                 .with_read_port(erp_client.clone())
                 .with_write_port(erp_client.clone())
+                .with_erp_config_sink(erp_client.clone())
                 .with_state_port(admin_state_store.clone());
             auth = auth.with_supplier_dependencies(erp_client.clone(), admin_state_store.clone());
             auth = auth.with_customer_dependencies(erp_client.clone(), admin_state_store.clone());
@@ -92,6 +94,7 @@ impl AppState {
                     "direct DB read enabled for Werka home"
                 );
                 let direct_reader = Arc::new(DirectDbReader::new(db_config));
+                admin = admin.with_credential_port(direct_reader.clone());
                 werka = werka
                     .with_lookup(direct_reader.clone())
                     .with_customer_issue_source_lookup(direct_reader.clone())

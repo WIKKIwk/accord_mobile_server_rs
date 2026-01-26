@@ -50,8 +50,8 @@ impl WerkaCustomerIssueWriter for ErpnextClient {
     }
 
     async fn resolve_warehouse(&self) -> Result<String, WerkaPortError> {
-        if !self.default_warehouse.trim().is_empty() {
-            return Ok(self.default_warehouse.trim().to_string());
+        if !self.default_warehouse().trim().is_empty() {
+            return Ok(self.default_warehouse().trim().to_string());
         }
         let payload: ListResponse<NameRow> = self
             .get_json(
@@ -261,7 +261,7 @@ impl ErpnextClient {
     ) -> Result<T, WerkaPortError> {
         let response = self
             .http
-            .get(format!("{}{}", self.base_url, encoded_path(path)))
+            .get(format!("{}{}", self.base_url(), encoded_path(path)))
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .query(query)
             .send()
@@ -278,7 +278,7 @@ impl ErpnextClient {
     ) -> Result<T, WerkaPortError> {
         let mut request = self
             .http
-            .request(method, format!("{}{}", self.base_url, encoded_path(path)))
+            .request(method, format!("{}{}", self.base_url(), encoded_path(path)))
             .header(reqwest::header::AUTHORIZATION, self.auth_header());
         if let Some(payload) = payload {
             request = request.json(&payload);
@@ -295,7 +295,7 @@ impl ErpnextClient {
     ) -> Result<(), WerkaPortError> {
         let mut request = self
             .http
-            .request(method, format!("{}{}", self.base_url, encoded_path(path)))
+            .request(method, format!("{}{}", self.base_url(), encoded_path(path)))
             .header(reqwest::header::AUTHORIZATION, self.auth_header());
         if let Some(payload) = payload {
             request = request.json(&payload);

@@ -141,8 +141,8 @@ impl ErpnextClient {
     }
 
     async fn resolve_supplier_item_warehouse(&self) -> Result<String, WerkaPortError> {
-        if !self.default_warehouse.trim().is_empty() {
-            return Ok(self.default_warehouse.trim().to_string());
+        if !self.default_warehouse().trim().is_empty() {
+            return Ok(self.default_warehouse().trim().to_string());
         }
         let payload: ListResponse<NameRow> = self
             .supplier_get_json(
@@ -168,7 +168,7 @@ impl ErpnextClient {
     ) -> Result<T, WerkaPortError> {
         let response = self
             .http
-            .get(format!("{}{}", self.base_url, path))
+            .get(format!("{}{}", self.base_url(), path))
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .query(query)
             .send()

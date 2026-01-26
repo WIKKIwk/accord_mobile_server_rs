@@ -15,7 +15,7 @@ impl CustomerLookup for ErpnextClient {
         let limit = normalize_limit(limit);
         let mut request = self
             .http
-            .get(format!("{}/api/resource/Customer", self.base_url))
+            .get(format!("{}/api/resource/Customer", self.base_url()))
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .query(&[
                 (
@@ -60,7 +60,7 @@ pub async fn get_customer_profile(
         .http
         .get(format!(
             "{}/api/resource/Customer/{}",
-            client.base_url,
+            client.base_url(),
             urlencoding::encode(id.trim())
         ))
         .header(reqwest::header::AUTHORIZATION, client.auth_header())

@@ -126,7 +126,7 @@ impl ErpnextClient {
     ) -> Result<T, WerkaPortError> {
         let response = self
             .http
-            .get(format!("{}{}", self.base_url, encoded_path(path)))
+            .get(format!("{}{}", self.base_url(), encoded_path(path)))
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .query(query)
             .send()
@@ -143,7 +143,7 @@ impl ErpnextClient {
     ) -> Result<T, WerkaPortError> {
         let mut request = self
             .http
-            .request(method, format!("{}{}", self.base_url, encoded_path(path)))
+            .request(method, format!("{}{}", self.base_url(), encoded_path(path)))
             .header(reqwest::header::AUTHORIZATION, self.auth_header());
         if let Some(payload) = payload {
             request = request.json(&payload);
@@ -160,7 +160,7 @@ impl ErpnextClient {
     ) -> Result<(), WerkaPortError> {
         let mut request = self
             .http
-            .request(method, format!("{}{}", self.base_url, encoded_path(path)))
+            .request(method, format!("{}{}", self.base_url(), encoded_path(path)))
             .header(reqwest::header::AUTHORIZATION, self.auth_header());
         if let Some(payload) = payload {
             request = request.json(&payload);

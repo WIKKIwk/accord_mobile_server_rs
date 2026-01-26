@@ -11,7 +11,10 @@ use crate::core::admin::models::{
     AdminSettings, AdminState, AdminSupplier, AdminSupplierDetail, AdminSupplierSummary,
     AdminSuppliersPage,
 };
-use crate::core::admin::ports::{AdminPortError, AdminReadPort, AdminStatePort, AdminWritePort};
+use crate::core::admin::ports::{
+    AdminCredentialPort, AdminEnvPersister, AdminErpConfigSink, AdminPortError, AdminReadPort,
+    AdminStatePort, AdminWritePort,
+};
 use crate::core::auth::access_codes::{SupplierAccessInput, supplier_access_code};
 use crate::core::auth::service::normalize_phone;
 use crate::core::werka::models::{CustomerDirectoryEntry, SupplierItem};
@@ -25,6 +28,9 @@ pub struct AdminService {
     read_port: Option<Arc<dyn AdminReadPort>>,
     write_port: Option<Arc<dyn AdminWritePort>>,
     state_port: Option<Arc<dyn AdminStatePort>>,
+    credential_port: Option<Arc<dyn AdminCredentialPort>>,
+    env_persister: Option<Arc<dyn AdminEnvPersister>>,
+    erp_config_sink: Option<Arc<dyn AdminErpConfigSink>>,
 }
 
 #[derive(Debug, Clone)]
@@ -33,6 +39,7 @@ struct AdminConfig {
     erp_api_key: String,
     erp_api_secret: String,
     default_target_warehouse: String,
+    default_uom: String,
     werka_phone: String,
     werka_name: String,
     werka_code: String,
@@ -50,6 +57,11 @@ impl AdminService {
                 erp_api_key: config.erp_api_key.clone(),
                 erp_api_secret: config.erp_api_secret.clone(),
                 default_target_warehouse: config.default_target_warehouse.clone(),
+                default_uom: std::env::var("ERP_DEFAULT_UOM")
+                    .ok()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| "Kg".to_string()),
                 werka_phone: "+99888862440".to_string(),
                 werka_name: config.werka_name.clone(),
                 werka_code: config.werka_code.clone(),
@@ -61,6 +73,9 @@ impl AdminService {
             read_port: None,
             write_port: None,
             state_port: None,
+            credential_port: None,
+            env_persister: None,
+            erp_config_sink: None,
         }
     }
 
@@ -79,16 +94,49 @@ impl AdminService {
         self
     }
 
+    pub fn with_credential_port(mut self, credential_port: Arc<dyn AdminCredentialPort>) -> Self {
+        self.credential_port = Some(credential_port);
+        self
+    }
+
+    pub fn with_env_persister(mut self, env_persister: Arc<dyn AdminEnvPersister>) -> Self {
+        self.env_persister = Some(env_persister);
+        self
+    }
+
+    pub fn with_erp_config_sink(mut self, erp_config_sink: Arc<dyn AdminErpConfigSink>) -> Self {
+        self.erp_config_sink = Some(erp_config_sink);
+        self
+    }
+
     pub async fn settings(&self) -> Result<AdminSettings, AdminPortError> {
         let config = self.config.read().await;
         let state = self.state_for("werka").await?;
         let now = OffsetDateTime::now_utc();
+        let mut api_key = config.erp_api_key.clone();
+        let mut api_secret = config.erp_api_secret.clone();
+        if let Some(port) = &self.credential_port {
+            if let Ok((current_key, current_secret)) = port.admin_api_auth("Administrator").await {
+                if !current_key.trim().is_empty() {
+                    api_key = current_key.trim().to_string();
+                }
+                if !current_secret.trim().is_empty() {
+                    api_secret = current_secret.trim().to_string();
+                }
+                self.update_erp_runtime(
+                    &config.erp_url,
+                    &api_key,
+                    &api_secret,
+                    &config.default_target_warehouse,
+                );
+            }
+        }
         Ok(AdminSettings {
             erp_url: config.erp_url.clone(),
-            erp_api_key: config.erp_api_key.clone(),
-            erp_api_secret: config.erp_api_secret.clone(),
+            erp_api_key: api_key,
+            erp_api_secret: api_secret,
             default_target_warehouse: config.default_target_warehouse.clone(),
-            default_uom: "Kg".to_string(),
+            default_uom: config.default_uom.clone(),
             werka_phone: config.werka_phone.clone(),
             werka_name: config.werka_name.clone(),
             werka_code: config.werka_code.clone(),
@@ -116,11 +164,53 @@ impl AdminService {
             input.erp_api_secret.trim().to_string()
         };
         config.default_target_warehouse = input.default_target_warehouse.trim().to_string();
+        config.default_uom = input.default_uom.trim().to_string();
+        if config.default_uom.is_empty() {
+            config.default_uom = "Kg".to_string();
+        }
         config.werka_phone = input.werka_phone.trim().to_string();
         config.werka_name = input.werka_name.trim().to_string();
         config.werka_code = input.werka_code.trim().to_string();
         config.admin_phone = input.admin_phone.trim().to_string();
         config.admin_name = input.admin_name.trim().to_string();
+        if let Some(port) = &self.credential_port {
+            let mut api_key = input.erp_api_key.trim().to_string();
+            let mut api_secret = input.erp_api_secret.trim().to_string();
+            if api_key.is_empty() || api_secret.is_empty() {
+                let (current_key, current_secret) = port.admin_api_auth("Administrator").await?;
+                if api_key.is_empty() {
+                    api_key = current_key.trim().to_string();
+                }
+                if api_secret.is_empty() {
+                    api_secret = current_secret.trim().to_string();
+                }
+            }
+            port.update_admin_api_auth("Administrator", &api_key, &api_secret)
+                .await?;
+            config.erp_api_key = api_key;
+            config.erp_api_secret = api_secret;
+        }
+        self.update_erp_runtime(
+            &config.erp_url,
+            &config.erp_api_key,
+            &config.erp_api_secret,
+            &config.default_target_warehouse,
+        );
+        if let Some(persister) = &self.env_persister {
+            persister.upsert(BTreeMap::from([
+                ("ERP_URL", config.erp_url.clone()),
+                (
+                    "ERP_DEFAULT_TARGET_WAREHOUSE",
+                    config.default_target_warehouse.clone(),
+                ),
+                ("ERP_DEFAULT_UOM", config.default_uom.clone()),
+                ("WERKA_PHONE", config.werka_phone.clone()),
+                ("WERKA_NAME", config.werka_name.clone()),
+                ("MOBILE_DEV_WERKA_CODE", config.werka_code.clone()),
+                ("ADMINKA_PHONE", config.admin_phone.clone()),
+                ("ADMINKA_NAME", config.admin_name.clone()),
+            ]))?;
+        }
         drop(config);
         self.settings().await
     }
@@ -642,6 +732,12 @@ impl AdminService {
         state.custom_code = code.clone();
         self.put_state("werka", state).await?;
         self.config.write().await.werka_code = code;
+        if let Some(persister) = &self.env_persister {
+            persister.upsert(BTreeMap::from([(
+                "MOBILE_DEV_WERKA_CODE",
+                self.config.read().await.werka_code.clone(),
+            )]))?;
+        }
         self.settings().await
     }
 
@@ -651,6 +747,18 @@ impl AdminService {
 
     fn write_port(&self) -> Result<&Arc<dyn AdminWritePort>, AdminPortError> {
         self.write_port.as_ref().ok_or(AdminPortError::LookupFailed)
+    }
+
+    fn update_erp_runtime(
+        &self,
+        base_url: &str,
+        api_key: &str,
+        api_secret: &str,
+        default_warehouse: &str,
+    ) {
+        if let Some(sink) = &self.erp_config_sink {
+            sink.set_erp_config(base_url, api_key, api_secret, default_warehouse);
+        }
     }
 
     async fn state_for(&self, ref_: &str) -> Result<AdminState, AdminPortError> {
