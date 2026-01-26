@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::ai::werka_search::WerkaAiSearchService;
 use crate::config::AppConfig;
 use crate::core::auth::service::AuthService;
+use crate::core::customer::service::CustomerService;
 use crate::core::profile::service::ProfileService;
 use crate::core::session::manager::SessionManager;
 use crate::core::werka::service::WerkaService;
@@ -14,6 +15,7 @@ use crate::store::admin_state_store::AdminSupplierStateStore;
 pub struct AppState {
     pub config: Arc<AppConfig>,
     pub auth: AuthService,
+    pub customer: CustomerService,
     pub profiles: ProfileService,
     pub werka: WerkaService,
     pub sessions: SessionManager,
@@ -22,6 +24,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(config: AppConfig) -> Self {
         let mut auth = AuthService::new(&config);
+        let mut customer = CustomerService::new();
         let mut profiles = ProfileService::new(config.erp_url.clone());
         let mut werka = WerkaService::new();
         let sessions = SessionManager::persistent(
@@ -52,6 +55,7 @@ impl AppState {
             );
             auth = auth.with_supplier_dependencies(erp_client.clone(), admin_state_store.clone());
             auth = auth.with_customer_dependencies(erp_client.clone(), admin_state_store.clone());
+            customer = customer.with_delivery_port(erp_client.clone());
             profiles = profiles.with_erp_lookup(erp_client.clone());
             werka = werka
                 .with_customer_issue_writer(erp_client.clone())
@@ -87,6 +91,7 @@ impl AppState {
         Self {
             config: Arc::new(config),
             auth,
+            customer,
             profiles,
             werka,
             sessions,

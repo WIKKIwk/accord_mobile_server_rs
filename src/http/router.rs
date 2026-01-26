@@ -5,7 +5,7 @@ use serde::Serialize;
 use tower_http::trace::TraceLayer;
 
 use crate::app::AppState;
-use crate::http::handlers::{auth, notifications, profile, supplier, werka};
+use crate::http::handlers::{auth, customer, notifications, profile, supplier, werka};
 
 pub fn build_router(state: AppState) -> Router {
     Router::new()
@@ -13,6 +13,14 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/mobile/auth/login", post(auth::login))
         .route("/v1/mobile/auth/logout", post(auth::logout))
         .route("/v1/mobile/me", get(auth::me))
+        .route("/v1/mobile/customer/summary", any(customer::summary))
+        .route("/v1/mobile/customer/history", any(customer::history))
+        .route(
+            "/v1/mobile/customer/status-details",
+            any(customer::status_details),
+        )
+        .route("/v1/mobile/customer/detail", any(customer::detail))
+        .route("/v1/mobile/customer/respond", any(customer::respond))
         .route(
             "/v1/mobile/notifications/detail",
             any(notifications::detail),
