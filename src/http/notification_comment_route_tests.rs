@@ -183,6 +183,7 @@ fn test_state() -> AppState {
         default_target_warehouse: String::new(),
         erp_timeout: std::time::Duration::from_secs(15),
         session_store_path: "data/mobile_sessions.json".into(),
+        profile_store_path: "data/mobile_profile_prefs.json".into(),
         admin_supplier_store_path: "data/mobile_admin_suppliers.json".into(),
         session_ttl_seconds: Some(30 * 24 * 60 * 60),
         supplier_prefix: "10".to_string(),

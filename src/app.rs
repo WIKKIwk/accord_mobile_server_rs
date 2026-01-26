@@ -10,6 +10,7 @@ use crate::core::werka::service::WerkaService;
 use crate::erpdb::reader::DirectDbReader;
 use crate::erpnext::client::ErpnextClient;
 use crate::store::admin_state_store::AdminSupplierStateStore;
+use crate::store::profile_store::ProfileStore;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -25,7 +26,8 @@ impl AppState {
     pub fn new(config: AppConfig) -> Self {
         let mut auth = AuthService::new(&config);
         let mut customer = CustomerService::new();
-        let mut profiles = ProfileService::new(config.erp_url.clone());
+        let profile_store = Arc::new(ProfileStore::new(config.profile_store_path.clone()));
+        let mut profiles = ProfileService::new(config.erp_url.clone()).with_store(profile_store);
         let mut werka = WerkaService::new();
         let sessions = SessionManager::persistent(
             config.session_store_path.clone(),

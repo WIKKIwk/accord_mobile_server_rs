@@ -13,6 +13,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/mobile/auth/login", post(auth::login))
         .route("/v1/mobile/auth/logout", post(auth::logout))
         .route("/v1/mobile/me", get(auth::me))
+        .route("/v1/mobile/profile", any(profile::profile))
+        .route("/v1/mobile/profile/avatar", any(profile::avatar_upload))
         .route("/v1/mobile/customer/summary", any(customer::summary))
         .route("/v1/mobile/customer/history", any(customer::history))
         .route(

@@ -84,7 +84,11 @@ pub fn bearer_token(headers: &HeaderMap) -> Option<String> {
     }
 }
 
-fn with_avatar_proxy(headers: &HeaderMap, mut principal: Principal, token: &str) -> Principal {
+pub(crate) fn with_avatar_proxy(
+    headers: &HeaderMap,
+    mut principal: Principal,
+    token: &str,
+) -> Principal {
     if principal.role != PrincipalRole::Supplier
         || principal.ref_.trim().is_empty()
         || principal.avatar_url.trim().is_empty()

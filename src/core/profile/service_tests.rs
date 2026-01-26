@@ -99,4 +99,14 @@ impl ProfileLookup for FakeProfileLookup {
             body: b"png".to_vec(),
         })
     }
+
+    async fn upload_supplier_image(
+        &self,
+        _supplier_id: &str,
+        _filename: &str,
+        _content_type: &str,
+        _content: Vec<u8>,
+    ) -> Result<String, ProfilePortError> {
+        Ok("/files/uploaded.png".to_string())
+    }
 }

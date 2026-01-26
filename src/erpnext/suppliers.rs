@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use reqwest::multipart;
 use serde::Deserialize;
 
 use crate::core::auth::ports::{AuthPortError, SupplierLookup, SupplierRecord};
@@ -127,6 +128,70 @@ impl ProfileLookup for ErpnextClient {
 
         Ok(DownloadedFile { content_type, body })
     }
+
+    async fn upload_supplier_image(
+        &self,
+        supplier_id: &str,
+        filename: &str,
+        content_type: &str,
+        content: Vec<u8>,
+    ) -> Result<String, ProfilePortError> {
+        let supplier_id = supplier_id.trim();
+        if supplier_id.is_empty() || content.is_empty() {
+            return Err(ProfilePortError::LookupFailed);
+        }
+        let filename = if filename.trim().is_empty() {
+            "avatar.png"
+        } else {
+            filename.trim()
+        };
+        let content_type = if content_type.trim().is_empty() {
+            "image/png"
+        } else {
+            content_type.trim()
+        };
+        let file_part = multipart::Part::bytes(content)
+            .file_name(filename.to_string())
+            .mime_str(content_type)
+            .map_err(|_| ProfilePortError::LookupFailed)?;
+        let form = multipart::Form::new()
+            .text("doctype", "Supplier")
+            .text("docname", supplier_id.to_string())
+            .text("is_private", "0")
+            .part("file", file_part);
+        let payload = self
+            .http
+            .post(format!("{}/api/method/upload_file", self.base_url))
+            .header(reqwest::header::AUTHORIZATION, self.auth_header())
+            .header(reqwest::header::ACCEPT, "application/json")
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|_| ProfilePortError::LookupFailed)?
+            .error_for_status()
+            .map_err(|_| ProfilePortError::LookupFailed)?
+            .json::<UploadFileResponse>()
+            .await
+            .map_err(|_| ProfilePortError::LookupFailed)?;
+        let file_url = payload.message.file_url.trim().to_string();
+        if file_url.is_empty() {
+            return Err(ProfilePortError::LookupFailed);
+        }
+        self.http
+            .put(format!(
+                "{}/api/resource/Supplier/{}",
+                self.base_url,
+                urlencoding::encode(supplier_id)
+            ))
+            .header(reqwest::header::AUTHORIZATION, self.auth_header())
+            .json(&serde_json::json!({ "image": file_url }))
+            .send()
+            .await
+            .map_err(|_| ProfilePortError::LookupFailed)?
+            .error_for_status()
+            .map_err(|_| ProfilePortError::LookupFailed)?;
+        Ok(file_url)
+    }
 }
 
 fn normalize_limit(limit: usize) -> usize {
@@ -166,6 +231,16 @@ struct SupplierGetRow {
     supplier_details: String,
     #[serde(default)]
     image: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct UploadFileResponse {
+    message: UploadedFile,
+}
+
+#[derive(Debug, Deserialize)]
+struct UploadedFile {
+    file_url: String,
 }
 
 fn suppliers_from_list_response(payload: SupplierListResponse) -> Vec<SupplierRecord> {

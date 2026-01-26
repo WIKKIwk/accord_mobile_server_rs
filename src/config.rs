@@ -13,6 +13,7 @@ pub struct AppConfig {
     pub default_target_warehouse: String,
     pub erp_timeout: Duration,
     pub session_store_path: PathBuf,
+    pub profile_store_path: PathBuf,
     pub admin_supplier_store_path: PathBuf,
     pub session_ttl_seconds: Option<u64>,
     pub supplier_prefix: String,
@@ -37,6 +38,8 @@ impl AppConfig {
         let session_path = std::env::var("MOBILE_API_SESSION_STORE_PATH")
             .or_else(|_| std::env::var("MOBILE_API_SESSION_STORE"))
             .unwrap_or_else(|_| "data/mobile_sessions.json".to_string());
+        let profile_path = std::env::var("MOBILE_API_PROFILE_STORE_PATH")
+            .unwrap_or_else(|_| "data/mobile_profile_prefs.json".to_string());
         let ttl_hours = std::env::var("MOBILE_API_SESSION_TTL_HOURS")
             .ok()
             .and_then(|raw| raw.trim().parse::<u64>().ok())
@@ -61,6 +64,7 @@ impl AppConfig {
             default_target_warehouse: env_or("ERP_DEFAULT_TARGET_WAREHOUSE", ""),
             erp_timeout: Duration::from_secs(erp_timeout_seconds),
             session_store_path: PathBuf::from(session_path),
+            profile_store_path: PathBuf::from(profile_path),
             admin_supplier_store_path: PathBuf::from(admin_supplier_path),
             session_ttl_seconds: Some(Duration::from_secs(ttl_hours * 60 * 60).as_secs()),
             supplier_prefix: env_or("MOBILE_DEV_SUPPLIER_PREFIX", "10"),
