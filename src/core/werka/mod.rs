@@ -12,6 +12,7 @@ pub mod ports;
 pub mod service;
 #[cfg(test)]
 mod service_tests;
+mod supplier_dispatch;
 mod supplier_read;
 #[cfg(test)]
 mod supplier_read_tests;

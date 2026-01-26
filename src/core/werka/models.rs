@@ -230,6 +230,13 @@ pub struct SupplierUnannouncedResponseRequest {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
+pub struct CreateDispatchRequest {
+    pub item_code: String,
+    pub qty: f64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ConfirmReceiptRequest {
     pub receipt_id: String,
     pub accepted_qty: f64,

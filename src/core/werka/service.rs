@@ -29,7 +29,7 @@ pub struct WerkaService {
     pub(crate) lookup: Option<Arc<dyn WerkaHomeLookup>>,
     customer_issue_writer: Option<Arc<dyn WerkaCustomerIssueWriter>>,
     customer_issue_source_lookup: Option<Arc<dyn CustomerIssueSourceLookup>>,
-    unannounced_writer: Option<Arc<dyn WerkaUnannouncedWriter>>,
+    pub(crate) unannounced_writer: Option<Arc<dyn WerkaUnannouncedWriter>>,
     pub(crate) supplier_unannounced_writer: Option<Arc<dyn SupplierUnannouncedWriter>>,
     pub(crate) confirm_writer: Option<Arc<dyn WerkaConfirmWriter>>,
     pub(crate) ai_search: Option<Arc<dyn WerkaAiSearch>>,
