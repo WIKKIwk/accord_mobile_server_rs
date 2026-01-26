@@ -117,15 +117,75 @@ pub fn build_router(state: AppState) -> Router {
             "/v1/mobile/admin/suppliers/items/assigned",
             any(admin::assigned_supplier_items),
         )
+        .route(
+            "/v1/mobile/admin/suppliers/status",
+            any(admin::supplier_status),
+        )
+        .route(
+            "/v1/mobile/admin/suppliers/phone",
+            any(admin::supplier_phone),
+        )
+        .route(
+            "/v1/mobile/admin/suppliers/items",
+            any(admin::supplier_items),
+        )
+        .route(
+            "/v1/mobile/admin/suppliers/items/add",
+            any(admin::supplier_item_add),
+        )
+        .route(
+            "/v1/mobile/admin/suppliers/items/remove",
+            any(admin::supplier_item_remove),
+        )
+        .route(
+            "/v1/mobile/admin/suppliers/code/regenerate",
+            any(admin::supplier_code_regenerate),
+        )
+        .route(
+            "/v1/mobile/admin/suppliers/remove",
+            any(admin::supplier_remove),
+        )
+        .route(
+            "/v1/mobile/admin/suppliers/restore",
+            any(admin::supplier_restore),
+        )
         .route("/v1/mobile/admin/customers", any(admin::customers))
         .route("/v1/mobile/admin/customers/list", any(admin::customer_list))
         .route(
             "/v1/mobile/admin/customers/detail",
             any(admin::customer_detail),
         )
+        .route(
+            "/v1/mobile/admin/customers/phone",
+            any(admin::customer_phone),
+        )
+        .route(
+            "/v1/mobile/admin/customers/code/regenerate",
+            any(admin::customer_code_regenerate),
+        )
+        .route(
+            "/v1/mobile/admin/customers/items/add",
+            any(admin::customer_item_add),
+        )
+        .route(
+            "/v1/mobile/admin/customers/items/remove",
+            any(admin::customer_item_remove),
+        )
+        .route(
+            "/v1/mobile/admin/customers/remove",
+            any(admin::customer_remove),
+        )
         .route("/v1/mobile/admin/items", any(admin::items))
+        .route(
+            "/v1/mobile/admin/items/bulk-move-group",
+            any(admin::items_bulk_move_group),
+        )
         .route("/v1/mobile/admin/item-groups", any(admin::item_groups))
         .route("/v1/mobile/admin/activity", any(admin::activity))
+        .route(
+            "/v1/mobile/admin/werka/code/regenerate",
+            any(admin::werka_code_regenerate),
+        )
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

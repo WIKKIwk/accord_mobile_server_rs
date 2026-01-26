@@ -20,6 +20,18 @@ pub struct AdminSettings {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminCreateSupplierRequest {
+    pub name: String,
+    pub phone: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminCreateCustomerRequest {
+    pub name: String,
+    pub phone: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdminSupplier {
     #[serde(rename = "ref")]
     pub ref_: String,
@@ -73,6 +85,52 @@ pub struct AdminCustomerDetail {
     pub assigned_items: Vec<SupplierItem>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminPhoneUpdateRequest {
+    pub phone: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminSupplierStatusUpdateRequest {
+    pub blocked: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminSupplierItemsUpdateRequest {
+    pub item_codes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminSupplierItemMutationRequest {
+    pub item_code: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminCreateItemRequest {
+    pub code: String,
+    pub name: String,
+    pub uom: String,
+    pub item_group: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminBulkMoveItemsRequest {
+    pub item_codes: Vec<String>,
+    pub item_group: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminItemGroupBulkMoveResult {
+    pub item_group: String,
+    pub requested_count: usize,
+    pub updated_count: usize,
+    pub failed_count: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub updated_item_codes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failed_item_codes: Vec<String>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AdminDirectoryEntry {
     pub ref_: String,
@@ -87,6 +145,11 @@ pub struct AdminState {
     pub removed: bool,
     pub assigned_item_codes: Vec<String>,
     pub cooldown_until: Option<OffsetDateTime>,
+    pub regen_window_started_at: Option<OffsetDateTime>,
+    pub regen_window_count: i32,
+    pub pending_persist_code: String,
+    pub pending_persist_at: Option<OffsetDateTime>,
+    pub assignments_configured: bool,
 }
 
 impl AdminState {

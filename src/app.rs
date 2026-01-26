@@ -67,6 +67,7 @@ impl AppState {
             );
             admin = admin
                 .with_read_port(erp_client.clone())
+                .with_write_port(erp_client.clone())
                 .with_state_port(admin_state_store.clone());
             auth = auth.with_supplier_dependencies(erp_client.clone(), admin_state_store.clone());
             auth = auth.with_customer_dependencies(erp_client.clone(), admin_state_store.clone());

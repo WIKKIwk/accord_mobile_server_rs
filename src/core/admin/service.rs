@@ -1,21 +1,29 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use rand::Rng;
 use time::OffsetDateTime;
+use tokio::sync::RwLock;
 
 use crate::config::AppConfig;
 use crate::core::admin::models::{
-    AdminActivity, AdminCustomerDetail, AdminDirectoryEntry, AdminSettings, AdminState,
-    AdminSupplier, AdminSupplierDetail, AdminSupplierSummary, AdminSuppliersPage,
+    AdminActivity, AdminCustomerDetail, AdminDirectoryEntry, AdminItemGroupBulkMoveResult,
+    AdminSettings, AdminState, AdminSupplier, AdminSupplierDetail, AdminSupplierSummary,
+    AdminSuppliersPage,
 };
-use crate::core::admin::ports::{AdminPortError, AdminReadPort, AdminStatePort};
+use crate::core::admin::ports::{AdminPortError, AdminReadPort, AdminStatePort, AdminWritePort};
 use crate::core::auth::access_codes::{SupplierAccessInput, supplier_access_code};
+use crate::core::auth::service::normalize_phone;
 use crate::core::werka::models::{CustomerDirectoryEntry, SupplierItem};
+
+const CODE_REGEN_WINDOW_SECONDS: i64 = 60;
+const MAX_CODE_REGENS_PER_WINDOW: i32 = 3;
 
 #[derive(Clone)]
 pub struct AdminService {
-    config: AdminConfig,
+    config: Arc<RwLock<AdminConfig>>,
     read_port: Option<Arc<dyn AdminReadPort>>,
+    write_port: Option<Arc<dyn AdminWritePort>>,
     state_port: Option<Arc<dyn AdminStatePort>>,
 }
 
@@ -30,12 +38,14 @@ struct AdminConfig {
     werka_code: String,
     admin_phone: String,
     admin_name: String,
+    supplier_prefix: String,
+    werka_prefix: String,
 }
 
 impl AdminService {
     pub fn new(config: &AppConfig) -> Self {
         Self {
-            config: AdminConfig {
+            config: Arc::new(RwLock::new(AdminConfig {
                 erp_url: config.erp_url.clone(),
                 erp_api_key: config.erp_api_key.clone(),
                 erp_api_secret: config.erp_api_secret.clone(),
@@ -45,8 +55,11 @@ impl AdminService {
                 werka_code: config.werka_code.clone(),
                 admin_phone: config.admin_phone.clone(),
                 admin_name: config.admin_name.clone(),
-            },
+                supplier_prefix: config.supplier_prefix.clone(),
+                werka_prefix: config.werka_prefix.clone(),
+            })),
             read_port: None,
+            write_port: None,
             state_port: None,
         }
     }
@@ -56,28 +69,60 @@ impl AdminService {
         self
     }
 
+    pub fn with_write_port(mut self, write_port: Arc<dyn AdminWritePort>) -> Self {
+        self.write_port = Some(write_port);
+        self
+    }
+
     pub fn with_state_port(mut self, state_port: Arc<dyn AdminStatePort>) -> Self {
         self.state_port = Some(state_port);
         self
     }
 
     pub async fn settings(&self) -> Result<AdminSettings, AdminPortError> {
+        let config = self.config.read().await;
         let state = self.state_for("werka").await?;
         let now = OffsetDateTime::now_utc();
         Ok(AdminSettings {
-            erp_url: self.config.erp_url.clone(),
-            erp_api_key: self.config.erp_api_key.clone(),
-            erp_api_secret: self.config.erp_api_secret.clone(),
-            default_target_warehouse: self.config.default_target_warehouse.clone(),
+            erp_url: config.erp_url.clone(),
+            erp_api_key: config.erp_api_key.clone(),
+            erp_api_secret: config.erp_api_secret.clone(),
+            default_target_warehouse: config.default_target_warehouse.clone(),
             default_uom: "Kg".to_string(),
-            werka_phone: self.config.werka_phone.clone(),
-            werka_name: self.config.werka_name.clone(),
-            werka_code: self.config.werka_code.clone(),
+            werka_phone: config.werka_phone.clone(),
+            werka_name: config.werka_name.clone(),
+            werka_code: config.werka_code.clone(),
             werka_code_locked: state.code_locked(now),
             werka_code_retry_after_sec: state.retry_after_seconds(now),
-            admin_phone: self.config.admin_phone.clone(),
-            admin_name: self.config.admin_name.clone(),
+            admin_phone: config.admin_phone.clone(),
+            admin_name: config.admin_name.clone(),
         })
+    }
+
+    pub async fn update_settings(
+        &self,
+        input: AdminSettings,
+    ) -> Result<AdminSettings, AdminPortError> {
+        let mut config = self.config.write().await;
+        config.erp_url = input.erp_url.trim().to_string();
+        config.erp_api_key = if input.erp_api_key.trim().is_empty() {
+            config.erp_api_key.clone()
+        } else {
+            input.erp_api_key.trim().to_string()
+        };
+        config.erp_api_secret = if input.erp_api_secret.trim().is_empty() {
+            config.erp_api_secret.clone()
+        } else {
+            input.erp_api_secret.trim().to_string()
+        };
+        config.default_target_warehouse = input.default_target_warehouse.trim().to_string();
+        config.werka_phone = input.werka_phone.trim().to_string();
+        config.werka_name = input.werka_name.trim().to_string();
+        config.werka_code = input.werka_code.trim().to_string();
+        config.admin_phone = input.admin_phone.trim().to_string();
+        config.admin_name = input.admin_name.trim().to_string();
+        drop(config);
+        self.settings().await
     }
 
     pub async fn suppliers_page(
@@ -281,8 +326,331 @@ impl AdminService {
         Ok(items.unwrap_or_default().into_iter().take(30).collect())
     }
 
+    pub async fn create_supplier(
+        &self,
+        name: &str,
+        phone: &str,
+    ) -> Result<AdminSupplier, AdminPortError> {
+        let entry = self
+            .write_port()?
+            .create_supplier(name.trim(), phone.trim())
+            .await?;
+        let mut state = self.state_for(&entry.ref_).await?;
+        if state.removed {
+            state.removed = false;
+            state.blocked = false;
+            self.put_state(&entry.ref_, state.clone()).await?;
+        }
+        self.build_supplier(entry, state)
+    }
+
+    pub async fn create_customer(
+        &self,
+        name: &str,
+        phone: &str,
+    ) -> Result<CustomerDirectoryEntry, AdminPortError> {
+        self.write_port()?
+            .create_customer(name.trim(), phone.trim())
+            .await
+            .map(customer_directory_entry)
+    }
+
+    pub async fn set_supplier_blocked(
+        &self,
+        ref_: &str,
+        blocked: bool,
+    ) -> Result<AdminSupplierDetail, AdminPortError> {
+        let entry = self.read_port()?.supplier_by_ref(ref_.trim()).await?;
+        let mut state = self.state_for(&entry.ref_).await?;
+        state.blocked = blocked;
+        self.put_state(&entry.ref_, state).await?;
+        self.supplier_detail(&entry.ref_).await
+    }
+
+    pub async fn update_supplier_phone(
+        &self,
+        ref_: &str,
+        phone: &str,
+    ) -> Result<AdminSupplierDetail, AdminPortError> {
+        let normalized = normalize_admin_phone(phone)?;
+        self.write_port()?
+            .update_supplier_phone(ref_.trim(), &normalized)
+            .await?;
+        self.supplier_detail(ref_).await
+    }
+
+    pub async fn update_customer_phone(
+        &self,
+        ref_: &str,
+        phone: &str,
+    ) -> Result<AdminCustomerDetail, AdminPortError> {
+        let normalized = normalize_admin_phone(phone)?;
+        self.write_port()?
+            .update_customer_phone(ref_.trim(), &normalized)
+            .await?;
+        self.customer_detail(ref_).await
+    }
+
+    pub async fn update_supplier_items(
+        &self,
+        ref_: &str,
+        item_codes: Vec<String>,
+    ) -> Result<AdminSupplierDetail, AdminPortError> {
+        let entry = self.read_port()?.supplier_by_ref(ref_.trim()).await?;
+        let normalized = normalize_item_codes(item_codes);
+        if !normalized.is_empty() {
+            let found = self.read_port()?.items_by_codes(&normalized).await?;
+            for code in &normalized {
+                if !found
+                    .iter()
+                    .any(|item| item.code.trim().eq_ignore_ascii_case(code.trim()))
+                {
+                    return Err(AdminPortError::InvalidInput(format!(
+                        "item topilmadi: {code}"
+                    )));
+                }
+            }
+        }
+        let current = self
+            .read_port()?
+            .assigned_supplier_items(&entry.ref_, 200)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|item| item.code)
+            .collect::<Vec<_>>();
+        for code in &normalized {
+            if !current
+                .iter()
+                .any(|current| current.trim().eq_ignore_ascii_case(code))
+            {
+                self.write_port()?
+                    .assign_supplier_item(&entry.ref_, code)
+                    .await?;
+            }
+        }
+        for code in current {
+            if !normalized
+                .iter()
+                .any(|desired| desired.trim().eq_ignore_ascii_case(code.trim()))
+            {
+                self.write_port()?
+                    .unassign_supplier_item(&entry.ref_, &code)
+                    .await?;
+            }
+        }
+        let mut state = self.state_for(&entry.ref_).await?;
+        state.assignments_configured = true;
+        state.assigned_item_codes = normalized;
+        self.put_state(&entry.ref_, state).await?;
+        self.supplier_detail(&entry.ref_).await
+    }
+
+    pub async fn assign_supplier_item(
+        &self,
+        ref_: &str,
+        item_code: &str,
+    ) -> Result<AdminSupplierDetail, AdminPortError> {
+        let entry = self.read_port()?.supplier_by_ref(ref_.trim()).await?;
+        let code = item_code.trim();
+        self.write_port()?
+            .assign_supplier_item(&entry.ref_, code)
+            .await?;
+        let mut state = self.state_for(&entry.ref_).await?;
+        state.assignments_configured = true;
+        state.assigned_item_codes = normalize_item_codes(
+            state
+                .assigned_item_codes
+                .into_iter()
+                .chain(std::iter::once(code.to_string()))
+                .collect(),
+        );
+        self.put_state(&entry.ref_, state).await?;
+        self.supplier_detail(&entry.ref_).await
+    }
+
+    pub async fn unassign_supplier_item(
+        &self,
+        ref_: &str,
+        item_code: &str,
+    ) -> Result<AdminSupplierDetail, AdminPortError> {
+        let entry = self.read_port()?.supplier_by_ref(ref_.trim()).await?;
+        self.write_port()?
+            .unassign_supplier_item(&entry.ref_, item_code.trim())
+            .await?;
+        let mut state = self.state_for(&entry.ref_).await?;
+        state.assignments_configured = true;
+        state
+            .assigned_item_codes
+            .retain(|code| !code.trim().eq_ignore_ascii_case(item_code.trim()));
+        self.put_state(&entry.ref_, state).await?;
+        self.supplier_detail(&entry.ref_).await
+    }
+
+    pub async fn assign_customer_item(
+        &self,
+        ref_: &str,
+        item_code: &str,
+    ) -> Result<AdminCustomerDetail, AdminPortError> {
+        let entry = self.read_port()?.customer_by_ref(ref_.trim()).await?;
+        let state = self.state_for(&entry.ref_).await?;
+        if state.removed {
+            return Err(AdminPortError::NotFound);
+        }
+        self.write_port()?
+            .assign_customer_item(&entry.ref_, item_code.trim())
+            .await?;
+        self.customer_detail(&entry.ref_).await
+    }
+
+    pub async fn unassign_customer_item(
+        &self,
+        ref_: &str,
+        item_code: &str,
+    ) -> Result<AdminCustomerDetail, AdminPortError> {
+        let entry = self.read_port()?.customer_by_ref(ref_.trim()).await?;
+        let state = self.state_for(&entry.ref_).await?;
+        if state.removed {
+            return Err(AdminPortError::NotFound);
+        }
+        self.write_port()?
+            .unassign_customer_item(&entry.ref_, item_code.trim())
+            .await?;
+        self.customer_detail(&entry.ref_).await
+    }
+
+    pub async fn regenerate_supplier_code(
+        &self,
+        ref_: &str,
+    ) -> Result<AdminSupplierDetail, AdminPortError> {
+        let entry = self.read_port()?.supplier_by_ref(ref_.trim()).await?;
+        let mut existing = self.existing_codes().await?;
+        let mut state = self.state_for(&entry.ref_).await?;
+        let now = OffsetDateTime::now_utc();
+        state = bump_code_regen_state(state, now)?;
+        state.custom_code = random_code(&self.config.read().await.supplier_prefix, &mut existing);
+        state.pending_persist_code = state.custom_code.clone();
+        state.pending_persist_at = Some(now + time::Duration::seconds(CODE_REGEN_WINDOW_SECONDS));
+        self.put_state(&entry.ref_, state).await?;
+        self.supplier_detail(&entry.ref_).await
+    }
+
+    pub async fn regenerate_customer_code(
+        &self,
+        ref_: &str,
+    ) -> Result<AdminCustomerDetail, AdminPortError> {
+        let entry = self.read_port()?.customer_by_ref(ref_.trim()).await?;
+        let mut existing = self.existing_state_codes().await?;
+        let mut state = self.state_for(&entry.ref_).await?;
+        let now = OffsetDateTime::now_utc();
+        state = bump_code_regen_state(state, now)?;
+        state.custom_code = random_code("30", &mut existing);
+        self.put_state(&entry.ref_, state.clone()).await?;
+        self.write_port()?
+            .update_customer_code(&entry.ref_, &state.custom_code)
+            .await?;
+        self.customer_detail(&entry.ref_).await
+    }
+
+    pub async fn remove_supplier(&self, ref_: &str) -> Result<(), AdminPortError> {
+        let entry = self.read_port()?.supplier_by_ref(ref_.trim()).await?;
+        let mut state = self.state_for(&entry.ref_).await?;
+        state.removed = true;
+        state.blocked = true;
+        self.put_state(&entry.ref_, state).await
+    }
+
+    pub async fn restore_supplier(
+        &self,
+        ref_: &str,
+    ) -> Result<AdminSupplierDetail, AdminPortError> {
+        let entry = self.read_port()?.supplier_by_ref(ref_.trim()).await?;
+        let mut state = self.state_for(&entry.ref_).await?;
+        state.removed = false;
+        state.blocked = false;
+        self.put_state(&entry.ref_, state).await?;
+        self.supplier_detail(&entry.ref_).await
+    }
+
+    pub async fn remove_customer(&self, ref_: &str) -> Result<(), AdminPortError> {
+        let entry = self.read_port()?.customer_by_ref(ref_.trim()).await?;
+        let mut state = self.state_for(&entry.ref_).await?;
+        state.removed = true;
+        state.blocked = true;
+        self.put_state(&entry.ref_, state).await
+    }
+
+    pub async fn create_item(
+        &self,
+        code: &str,
+        name: &str,
+        uom: &str,
+        item_group: &str,
+    ) -> Result<SupplierItem, AdminPortError> {
+        self.write_port()?
+            .create_item(code.trim(), name.trim(), uom.trim(), item_group.trim())
+            .await
+    }
+
+    pub async fn move_items_to_group(
+        &self,
+        item_codes: Vec<String>,
+        item_group: &str,
+    ) -> Result<AdminItemGroupBulkMoveResult, AdminPortError> {
+        let codes = normalize_item_codes(item_codes);
+        if codes.is_empty() {
+            return Err(AdminPortError::InvalidInput(
+                "item codes are required".to_string(),
+            ));
+        }
+        let group = item_group.trim();
+        if group.is_empty() {
+            return Err(AdminPortError::InvalidInput(
+                "item group is required".to_string(),
+            ));
+        }
+        let mut updated = Vec::new();
+        let mut failed = Vec::new();
+        for code in &codes {
+            if self
+                .write_port()?
+                .update_item_group(code, group)
+                .await
+                .is_ok()
+            {
+                updated.push(code.clone());
+            } else {
+                failed.push(code.clone());
+            }
+        }
+        Ok(AdminItemGroupBulkMoveResult {
+            item_group: group.to_string(),
+            requested_count: codes.len(),
+            updated_count: updated.len(),
+            failed_count: failed.len(),
+            updated_item_codes: updated,
+            failed_item_codes: failed,
+        })
+    }
+
+    pub async fn regenerate_werka_code(&self) -> Result<AdminSettings, AdminPortError> {
+        let mut state = self.state_for("werka").await?;
+        let now = OffsetDateTime::now_utc();
+        state = bump_code_regen_state(state, now)?;
+        let mut existing = BTreeMap::new();
+        let code = random_code(&self.config.read().await.werka_prefix, &mut existing);
+        state.custom_code = code.clone();
+        self.put_state("werka", state).await?;
+        self.config.write().await.werka_code = code;
+        self.settings().await
+    }
+
     fn read_port(&self) -> Result<&Arc<dyn AdminReadPort>, AdminPortError> {
         self.read_port.as_ref().ok_or(AdminPortError::LookupFailed)
+    }
+
+    fn write_port(&self) -> Result<&Arc<dyn AdminWritePort>, AdminPortError> {
+        self.write_port.as_ref().ok_or(AdminPortError::LookupFailed)
     }
 
     async fn state_for(&self, ref_: &str) -> Result<AdminState, AdminPortError> {
@@ -299,6 +667,42 @@ impl AdminService {
             Some(port) => port.states().await,
             None => Ok(BTreeMap::new()),
         }
+    }
+
+    async fn put_state(&self, ref_: &str, state: AdminState) -> Result<(), AdminPortError> {
+        self.state_port
+            .as_ref()
+            .ok_or(AdminPortError::LookupFailed)?
+            .put_state(ref_, state)
+            .await
+    }
+
+    async fn existing_state_codes(&self) -> Result<BTreeMap<String, ()>, AdminPortError> {
+        Ok(self
+            .states()
+            .await?
+            .into_values()
+            .filter_map(|state| {
+                let code = state.custom_code.trim();
+                (!code.is_empty()).then(|| (code.to_string(), ()))
+            })
+            .collect())
+    }
+
+    async fn existing_codes(&self) -> Result<BTreeMap<String, ()>, AdminPortError> {
+        let states = self.states().await?;
+        let entries = self.read_port()?.suppliers_page("", 0, 0).await?;
+        let mut existing = BTreeMap::new();
+        for entry in entries {
+            let state = states.get(entry.ref_.trim()).cloned().unwrap_or_default();
+            if state.removed {
+                continue;
+            }
+            if let Ok(code) = self.supplier_code(&entry, &state) {
+                existing.insert(code, ());
+            }
+        }
+        Ok(existing)
     }
 
     fn admin_suppliers_from_entries(
@@ -371,4 +775,75 @@ fn dedupe_strings(values: Vec<String>) -> Vec<String> {
         }
     }
     result
+}
+
+fn normalize_item_codes(values: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut result = Vec::new();
+    for value in values {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let key = trimmed.to_lowercase();
+        if seen.insert(key) {
+            result.push(trimmed.to_string());
+        }
+    }
+    result
+}
+
+fn normalize_admin_phone(phone: &str) -> Result<String, AdminPortError> {
+    let mut clean = phone
+        .replace(' ', "")
+        .replace('-', "")
+        .replace('(', "")
+        .replace(')', "");
+    if !clean.trim().starts_with('+') && clean.len() == 9 {
+        clean = format!("998{clean}");
+    }
+    normalize_phone(&clean).map_err(|_| AdminPortError::LookupFailed)
+}
+
+fn bump_code_regen_state(
+    mut state: AdminState,
+    now: OffsetDateTime,
+) -> Result<AdminState, AdminPortError> {
+    if state.code_locked(now) {
+        return Err(AdminPortError::CodeRegenCooldown);
+    }
+    if state
+        .regen_window_started_at
+        .map(|started| now - started >= time::Duration::seconds(CODE_REGEN_WINDOW_SECONDS))
+        .unwrap_or(true)
+    {
+        state.regen_window_started_at = Some(now);
+        state.regen_window_count = 0;
+        state.cooldown_until = None;
+    }
+    state.regen_window_count += 1;
+    if state.regen_window_count >= MAX_CODE_REGENS_PER_WINDOW {
+        state.cooldown_until = state
+            .regen_window_started_at
+            .map(|started| started + time::Duration::seconds(CODE_REGEN_WINDOW_SECONDS));
+    }
+    Ok(state)
+}
+
+fn random_code(prefix: &str, existing: &mut BTreeMap<String, ()>) -> String {
+    let prefix = if prefix.trim().is_empty() {
+        "10"
+    } else {
+        prefix.trim()
+    };
+    loop {
+        let suffix = (0..10)
+            .map(|_| char::from(b'0' + rand::rng().random_range(0..10)))
+            .collect::<String>();
+        let code = format!("{prefix}{suffix}");
+        if !existing.contains_key(&code) {
+            existing.insert(code.clone(), ());
+            return code;
+        }
+    }
 }

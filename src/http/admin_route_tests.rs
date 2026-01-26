@@ -4,13 +4,14 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
+use tokio::sync::Mutex;
 use tower::ServiceExt;
 
 use super::router::build_router;
 use crate::app::AppState;
 use crate::config::AppConfig;
 use crate::core::admin::models::{AdminDirectoryEntry, AdminState};
-use crate::core::admin::ports::{AdminPortError, AdminReadPort, AdminStatePort};
+use crate::core::admin::ports::{AdminPortError, AdminReadPort, AdminStatePort, AdminWritePort};
 use crate::core::admin::service::AdminService;
 use crate::core::auth::models::{Principal, PrincipalRole};
 use crate::core::session::manager::SessionManager;
@@ -135,6 +136,138 @@ async fn admin_customers_and_items_read_like_go() {
     assert_eq!(json_body(groups).await[0], "All Item Groups");
 }
 
+#[tokio::test]
+async fn admin_create_supplier_and_customer_mutations_like_go() {
+    let state = test_state();
+    let token = session(&state, PrincipalRole::Admin).await;
+
+    let supplier = build_router(state.clone())
+        .oneshot(request_with_body(
+            "POST",
+            "/v1/mobile/admin/suppliers",
+            &token,
+            r#"{"name":"New Supplier","phone":"+998909999999"}"#,
+        ))
+        .await
+        .expect("response");
+    assert_eq!(supplier.status(), StatusCode::OK);
+    let value = json_body(supplier).await;
+    assert_eq!(value["ref"], "SUP-NEW");
+    assert_eq!(value["phone"], "+998909999999");
+
+    let customer = build_router(state)
+        .oneshot(request_with_body(
+            "POST",
+            "/v1/mobile/admin/customers",
+            &token,
+            r#"{"name":"New Customer","phone":"+998901234567"}"#,
+        ))
+        .await
+        .expect("response");
+    assert_eq!(customer.status(), StatusCode::OK);
+    let value = json_body(customer).await;
+    assert_eq!(value["ref"], "CUST-NEW");
+    assert_eq!(value["name"], "New Customer");
+}
+
+#[tokio::test]
+async fn admin_supplier_status_and_remove_mutations_like_go() {
+    let state = test_state();
+    let token = session(&state, PrincipalRole::Admin).await;
+
+    let status = build_router(state.clone())
+        .oneshot(request_with_body(
+            "PUT",
+            "/v1/mobile/admin/suppliers/status?ref=SUP-001",
+            &token,
+            r#"{"blocked":true}"#,
+        ))
+        .await
+        .expect("response");
+    assert_eq!(status.status(), StatusCode::OK);
+    assert_eq!(json_body(status).await["blocked"], true);
+
+    let remove = build_router(state)
+        .oneshot(request(
+            "DELETE",
+            "/v1/mobile/admin/suppliers/remove?ref=SUP-001",
+            &token,
+        ))
+        .await
+        .expect("response");
+    assert_eq!(remove.status(), StatusCode::OK);
+    assert_eq!(json_body(remove).await["ok"], true);
+}
+
+#[tokio::test]
+async fn admin_item_mutation_errors_match_go() {
+    let state = test_state();
+    let token = session(&state, PrincipalRole::Admin).await;
+
+    let missing = build_router(state.clone())
+        .oneshot(request(
+            "DELETE",
+            "/v1/mobile/admin/customers/items/remove?ref=CUST-001",
+            &token,
+        ))
+        .await
+        .expect("response");
+    assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        json_body(missing).await["error"],
+        "ref and item_code are required"
+    );
+
+    let invalid = build_router(state)
+        .oneshot(request_with_body(
+            "POST",
+            "/v1/mobile/admin/items/bulk-move-group",
+            &token,
+            r#"{"item_codes":[],"item_group":"Products"}"#,
+        ))
+        .await
+        .expect("response");
+    assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(json_body(invalid).await["error"], "item codes are required");
+}
+
+#[tokio::test]
+async fn admin_item_create_and_werka_regenerate_like_go() {
+    let state = test_state();
+    let token = session(&state, PrincipalRole::Admin).await;
+
+    let item = build_router(state.clone())
+        .oneshot(request_with_body(
+            "POST",
+            "/v1/mobile/admin/items",
+            &token,
+            r#"{"code":"ITEM-NEW","name":"New Item","uom":"Kg","item_group":"Products"}"#,
+        ))
+        .await
+        .expect("response");
+    assert_eq!(item.status(), StatusCode::OK);
+    let value = json_body(item).await;
+    assert_eq!(value["code"], "ITEM-NEW");
+    assert_eq!(value["item_group"], "Products");
+
+    let settings = build_router(state)
+        .oneshot(request(
+            "POST",
+            "/v1/mobile/admin/werka/code/regenerate",
+            &token,
+        ))
+        .await
+        .expect("response");
+    assert_eq!(settings.status(), StatusCode::OK);
+    let value = json_body(settings).await;
+    assert!(
+        value["werka_code"]
+            .as_str()
+            .expect("code")
+            .starts_with("20")
+    );
+}
+
 fn test_state() -> AppState {
     let mut state = AppState::new(AppConfig {
         bind_addr: "127.0.0.1:8081".parse().expect("addr"),
@@ -164,9 +297,11 @@ fn test_state() -> AppState {
         direct_db_name: String::new(),
     });
     state.sessions = SessionManager::memory(Some(30 * 24 * 60 * 60));
+    let erp = Arc::new(FakeAdminReadPort);
     state.admin = AdminService::new(&state.config)
-        .with_read_port(Arc::new(FakeAdminReadPort))
-        .with_state_port(Arc::new(FakeAdminStatePort));
+        .with_read_port(erp.clone())
+        .with_write_port(erp)
+        .with_state_port(Arc::new(FakeAdminStatePort::new()));
     state
 }
 
@@ -186,11 +321,16 @@ async fn session(state: &AppState, role: PrincipalRole) -> String {
 }
 
 fn request(method: &str, uri: &str, token: &str) -> Request<Body> {
+    request_with_body(method, uri, token, "")
+}
+
+fn request_with_body(method: &str, uri: &str, token: &str, body: &str) -> Request<Body> {
     Request::builder()
         .method(method)
         .uri(uri)
         .header(header::AUTHORIZATION, format!("Bearer {token}"))
-        .body(Body::empty())
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
         .expect("request")
 }
 
@@ -280,35 +420,137 @@ impl AdminReadPort for FakeAdminReadPort {
     }
 }
 
-struct FakeAdminStatePort;
+#[async_trait]
+impl AdminWritePort for FakeAdminReadPort {
+    async fn create_supplier(
+        &self,
+        name: &str,
+        phone: &str,
+    ) -> Result<AdminDirectoryEntry, AdminPortError> {
+        Ok(entry("SUP-NEW", name, phone))
+    }
+
+    async fn update_supplier_phone(&self, _ref_: &str, _phone: &str) -> Result<(), AdminPortError> {
+        Ok(())
+    }
+
+    async fn assign_supplier_item(
+        &self,
+        _ref_: &str,
+        _item_code: &str,
+    ) -> Result<(), AdminPortError> {
+        Ok(())
+    }
+
+    async fn unassign_supplier_item(
+        &self,
+        _ref_: &str,
+        _item_code: &str,
+    ) -> Result<(), AdminPortError> {
+        Ok(())
+    }
+
+    async fn create_customer(
+        &self,
+        name: &str,
+        phone: &str,
+    ) -> Result<AdminDirectoryEntry, AdminPortError> {
+        Ok(entry("CUST-NEW", name, phone))
+    }
+
+    async fn update_customer_phone(&self, _ref_: &str, _phone: &str) -> Result<(), AdminPortError> {
+        Ok(())
+    }
+
+    async fn update_customer_code(&self, _ref_: &str, _code: &str) -> Result<(), AdminPortError> {
+        Ok(())
+    }
+
+    async fn assign_customer_item(
+        &self,
+        _ref_: &str,
+        _item_code: &str,
+    ) -> Result<(), AdminPortError> {
+        Ok(())
+    }
+
+    async fn unassign_customer_item(
+        &self,
+        _ref_: &str,
+        _item_code: &str,
+    ) -> Result<(), AdminPortError> {
+        Ok(())
+    }
+
+    async fn create_item(
+        &self,
+        code: &str,
+        name: &str,
+        uom: &str,
+        item_group: &str,
+    ) -> Result<SupplierItem, AdminPortError> {
+        Ok(SupplierItem {
+            code: code.to_string(),
+            name: name.to_string(),
+            uom: uom.to_string(),
+            warehouse: "Stores - CH".to_string(),
+            item_group: item_group.to_string(),
+        })
+    }
+
+    async fn update_item_group(
+        &self,
+        _item_code: &str,
+        _item_group: &str,
+    ) -> Result<(), AdminPortError> {
+        Ok(())
+    }
+}
+
+struct FakeAdminStatePort {
+    states: Mutex<BTreeMap<String, AdminState>>,
+}
+
+impl FakeAdminStatePort {
+    fn new() -> Self {
+        Self {
+            states: Mutex::new(BTreeMap::from([
+                (
+                    "SUP-001".to_string(),
+                    AdminState {
+                        custom_code: "10CUSTOM".to_string(),
+                        assigned_item_codes: vec!["ITEM-001".to_string(), "ITEM-002".to_string()],
+                        ..AdminState::default()
+                    },
+                ),
+                (
+                    "SUP-002".to_string(),
+                    AdminState {
+                        blocked: true,
+                        ..AdminState::default()
+                    },
+                ),
+                (
+                    "SUP-003".to_string(),
+                    AdminState {
+                        removed: true,
+                        ..AdminState::default()
+                    },
+                ),
+            ])),
+        }
+    }
+}
 
 #[async_trait]
 impl AdminStatePort for FakeAdminStatePort {
     async fn states(&self) -> Result<BTreeMap<String, AdminState>, AdminPortError> {
-        Ok(BTreeMap::from([
-            (
-                "SUP-001".to_string(),
-                AdminState {
-                    custom_code: "10CUSTOM".to_string(),
-                    assigned_item_codes: vec!["ITEM-001".to_string(), "ITEM-002".to_string()],
-                    ..AdminState::default()
-                },
-            ),
-            (
-                "SUP-002".to_string(),
-                AdminState {
-                    blocked: true,
-                    ..AdminState::default()
-                },
-            ),
-            (
-                "SUP-003".to_string(),
-                AdminState {
-                    removed: true,
-                    ..AdminState::default()
-                },
-            ),
-        ]))
+        Ok(self.states.lock().await.clone())
+    }
+
+    async fn put_state(&self, ref_: &str, state: AdminState) -> Result<(), AdminPortError> {
+        self.states.lock().await.insert(ref_.to_string(), state);
+        Ok(())
     }
 }
 

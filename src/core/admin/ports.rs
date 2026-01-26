@@ -56,6 +56,60 @@ pub trait AdminReadPort: Send + Sync {
 #[async_trait]
 pub trait AdminStatePort: Send + Sync {
     async fn states(&self) -> Result<BTreeMap<String, AdminState>, AdminPortError>;
+    async fn put_state(&self, ref_: &str, state: AdminState) -> Result<(), AdminPortError>;
+}
+
+#[async_trait]
+pub trait AdminWritePort: Send + Sync {
+    async fn create_supplier(
+        &self,
+        name: &str,
+        phone: &str,
+    ) -> Result<AdminDirectoryEntry, AdminPortError>;
+
+    async fn update_supplier_phone(&self, ref_: &str, phone: &str) -> Result<(), AdminPortError>;
+
+    async fn assign_supplier_item(&self, ref_: &str, item_code: &str)
+    -> Result<(), AdminPortError>;
+
+    async fn unassign_supplier_item(
+        &self,
+        ref_: &str,
+        item_code: &str,
+    ) -> Result<(), AdminPortError>;
+
+    async fn create_customer(
+        &self,
+        name: &str,
+        phone: &str,
+    ) -> Result<AdminDirectoryEntry, AdminPortError>;
+
+    async fn update_customer_phone(&self, ref_: &str, phone: &str) -> Result<(), AdminPortError>;
+
+    async fn update_customer_code(&self, ref_: &str, code: &str) -> Result<(), AdminPortError>;
+
+    async fn assign_customer_item(&self, ref_: &str, item_code: &str)
+    -> Result<(), AdminPortError>;
+
+    async fn unassign_customer_item(
+        &self,
+        ref_: &str,
+        item_code: &str,
+    ) -> Result<(), AdminPortError>;
+
+    async fn create_item(
+        &self,
+        code: &str,
+        name: &str,
+        uom: &str,
+        item_group: &str,
+    ) -> Result<SupplierItem, AdminPortError>;
+
+    async fn update_item_group(
+        &self,
+        item_code: &str,
+        item_group: &str,
+    ) -> Result<(), AdminPortError>;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -64,4 +118,8 @@ pub enum AdminPortError {
     NotFound,
     #[error("lookup failed")]
     LookupFailed,
+    #[error("code regenerate cooldown")]
+    CodeRegenCooldown,
+    #[error("{0}")]
+    InvalidInput(String),
 }

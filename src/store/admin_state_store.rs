@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::core::admin::models::AdminState;
 use crate::core::admin::ports::{AdminPortError, AdminStatePort};
@@ -41,10 +41,39 @@ impl AdminStatePort for AdminSupplierStateStore {
                         removed: value.removed,
                         assigned_item_codes: value.assigned_item_codes,
                         cooldown_until: value.cooldown_until,
+                        regen_window_started_at: value.regen_window_started_at,
+                        regen_window_count: value.regen_window_count,
+                        pending_persist_code: value.pending_persist_code,
+                        pending_persist_at: value.pending_persist_at,
+                        assignments_configured: value.assignments_configured,
                     },
                 )
             })
             .collect())
+    }
+
+    async fn put_state(&self, ref_: &str, state: AdminState) -> Result<(), AdminPortError> {
+        let mut raw: BTreeMap<String, AdminSupplierStateRecord> = json_file::read_map(&self.path)
+            .await
+            .map_err(|_| AdminPortError::LookupFailed)?;
+        raw.insert(
+            ref_.trim().to_string(),
+            AdminSupplierStateRecord {
+                custom_code: state.custom_code,
+                blocked: state.blocked,
+                removed: state.removed,
+                assignments_configured: state.assignments_configured,
+                assigned_item_codes: state.assigned_item_codes,
+                pending_persist_code: state.pending_persist_code,
+                pending_persist_at: state.pending_persist_at,
+                regen_window_started_at: state.regen_window_started_at,
+                regen_window_count: state.regen_window_count,
+                cooldown_until: state.cooldown_until,
+            },
+        );
+        json_file::write_pretty(&self.path, &raw)
+            .await
+            .map_err(|_| AdminPortError::LookupFailed)
     }
 }
 
@@ -91,7 +120,7 @@ impl WerkaSupplierAdminStateLookup for AdminSupplierStateStore {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 struct AdminSupplierStateRecord {
     #[serde(default)]
     custom_code: String,
@@ -100,7 +129,17 @@ struct AdminSupplierStateRecord {
     #[serde(default)]
     removed: bool,
     #[serde(default)]
+    assignments_configured: bool,
+    #[serde(default)]
     assigned_item_codes: Vec<String>,
+    #[serde(default)]
+    pending_persist_code: String,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pending_persist_at: Option<time::OffsetDateTime>,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    regen_window_started_at: Option<time::OffsetDateTime>,
+    #[serde(default)]
+    regen_window_count: i32,
     #[serde(default, with = "time::serde::rfc3339::option")]
     cooldown_until: Option<time::OffsetDateTime>,
 }

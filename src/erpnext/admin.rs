@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 use crate::core::admin::models::AdminDirectoryEntry;
-use crate::core::admin::ports::{AdminPortError, AdminReadPort};
+use crate::core::admin::ports::{AdminPortError, AdminReadPort, AdminWritePort};
 use crate::core::werka::models::SupplierItem;
 use crate::erpnext::client::ErpnextClient;
 
@@ -247,6 +247,270 @@ impl AdminReadPort for ErpnextClient {
     }
 }
 
+#[async_trait]
+impl AdminWritePort for ErpnextClient {
+    async fn create_supplier(
+        &self,
+        name: &str,
+        phone: &str,
+    ) -> Result<AdminDirectoryEntry, AdminPortError> {
+        let payload = serde_json::json!({
+            "supplier_name": name.trim(),
+            "supplier_type": "Company",
+            "supplier_group": "Services",
+            "mobile_no": phone.trim(),
+            "supplier_details": if phone.trim().is_empty() {
+                String::new()
+            } else {
+                format!("Telefon: {}", phone.trim())
+            },
+        });
+        let response: GetResponse<SupplierRow> = self
+            .admin_json_request(reqwest::Method::POST, "/api/resource/Supplier", payload)
+            .await?;
+        Ok(supplier_entry(response.data))
+    }
+
+    async fn update_supplier_phone(&self, ref_: &str, phone: &str) -> Result<(), AdminPortError> {
+        let current = self.supplier_by_ref(ref_).await?;
+        let details = upsert_phone_in_details("", phone);
+        let payload = serde_json::json!({
+            "mobile_no": phone.trim(),
+            "supplier_details": details,
+        });
+        self.admin_empty_request(
+            reqwest::Method::PUT,
+            &format!(
+                "/api/resource/Supplier/{}",
+                urlencoding::encode(&current.ref_)
+            ),
+            payload,
+        )
+        .await
+    }
+
+    async fn assign_supplier_item(
+        &self,
+        ref_: &str,
+        item_code: &str,
+    ) -> Result<(), AdminPortError> {
+        let payload = serde_json::json!({
+            "parent": item_code.trim(),
+            "parenttype": "Item",
+            "parentfield": "supplier_items",
+            "supplier": ref_.trim(),
+        });
+        self.admin_empty_request(
+            reqwest::Method::POST,
+            "/api/resource/Item%20Supplier",
+            payload,
+        )
+        .await
+    }
+
+    async fn unassign_supplier_item(
+        &self,
+        ref_: &str,
+        item_code: &str,
+    ) -> Result<(), AdminPortError> {
+        let payload: GetResponse<ItemSuppliersRow> = self
+            .admin_get_json(
+                &format!(
+                    "/api/resource/Item/{}",
+                    urlencoding::encode(item_code.trim())
+                ),
+                &[(
+                    "fields",
+                    r#"["default_supplier","supplier_items"]"#.to_string(),
+                )],
+            )
+            .await?;
+        for row in payload.data.supplier_items {
+            if row.supplier.trim().eq_ignore_ascii_case(ref_.trim()) && !row.name.trim().is_empty()
+            {
+                self.admin_empty_request(
+                    reqwest::Method::DELETE,
+                    &format!(
+                        "/api/resource/Item%20Supplier/{}",
+                        urlencoding::encode(row.name.trim())
+                    ),
+                    serde_json::Value::Null,
+                )
+                .await?;
+            }
+        }
+        if payload
+            .data
+            .default_supplier
+            .trim()
+            .eq_ignore_ascii_case(ref_.trim())
+        {
+            self.admin_empty_request(
+                reqwest::Method::PUT,
+                &format!(
+                    "/api/resource/Item/{}",
+                    urlencoding::encode(item_code.trim())
+                ),
+                serde_json::json!({"default_supplier": ""}),
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn create_customer(
+        &self,
+        name: &str,
+        phone: &str,
+    ) -> Result<AdminDirectoryEntry, AdminPortError> {
+        let payload = serde_json::json!({
+            "customer_name": name.trim(),
+            "customer_type": "Company",
+            "mobile_no": phone.trim(),
+        });
+        let response: GetResponse<CustomerRow> = self
+            .admin_json_request(reqwest::Method::POST, "/api/resource/Customer", payload)
+            .await?;
+        Ok(customer_entry(response.data))
+    }
+
+    async fn update_customer_phone(&self, ref_: &str, phone: &str) -> Result<(), AdminPortError> {
+        self.admin_empty_request(
+            reqwest::Method::PUT,
+            &format!(
+                "/api/resource/Customer/{}",
+                urlencoding::encode(ref_.trim())
+            ),
+            serde_json::json!({"customer_details": upsert_phone_in_details("", phone)}),
+        )
+        .await
+    }
+
+    async fn update_customer_code(&self, ref_: &str, code: &str) -> Result<(), AdminPortError> {
+        self.admin_empty_request(
+            reqwest::Method::PUT,
+            &format!(
+                "/api/resource/Customer/{}",
+                urlencoding::encode(ref_.trim())
+            ),
+            serde_json::json!({"customer_details": format!("Accord kodi: {}", code.trim())}),
+        )
+        .await
+    }
+
+    async fn assign_customer_item(
+        &self,
+        ref_: &str,
+        item_code: &str,
+    ) -> Result<(), AdminPortError> {
+        let payload = serde_json::json!({
+            "parent": item_code.trim(),
+            "parenttype": "Item",
+            "parentfield": "customer_items",
+            "customer_name": ref_.trim(),
+            "ref_code": ref_.trim(),
+        });
+        self.admin_empty_request(
+            reqwest::Method::POST,
+            "/api/resource/Item%20Customer%20Detail",
+            payload,
+        )
+        .await
+    }
+
+    async fn unassign_customer_item(
+        &self,
+        ref_: &str,
+        item_code: &str,
+    ) -> Result<(), AdminPortError> {
+        let payload: GetResponse<ItemCustomersRow> = self
+            .admin_get_json(
+                &format!(
+                    "/api/resource/Item/{}",
+                    urlencoding::encode(item_code.trim())
+                ),
+                &[("fields", r#"["customer_items"]"#.to_string())],
+            )
+            .await?;
+        let filtered = payload
+            .data
+            .customer_items
+            .into_iter()
+            .filter(|row| !row.customer_name.trim().eq_ignore_ascii_case(ref_.trim()))
+            .map(|row| {
+                serde_json::json!({
+                    "doctype": "Item Customer Detail",
+                    "name": row.name.trim(),
+                    "customer_name": row.customer_name.trim(),
+                    "customer_group": row.customer_group.trim(),
+                    "ref_code": row.ref_code.trim(),
+                })
+            })
+            .collect::<Vec<_>>();
+        self.admin_empty_request(
+            reqwest::Method::PUT,
+            &format!(
+                "/api/resource/Item/{}",
+                urlencoding::encode(item_code.trim())
+            ),
+            serde_json::json!({"customer_items": filtered}),
+        )
+        .await
+    }
+
+    async fn create_item(
+        &self,
+        code: &str,
+        name: &str,
+        uom: &str,
+        item_group: &str,
+    ) -> Result<SupplierItem, AdminPortError> {
+        let code = code.trim();
+        let name = if name.trim().is_empty() {
+            code
+        } else {
+            name.trim()
+        };
+        let uom = if uom.trim().is_empty() {
+            "Nos"
+        } else {
+            uom.trim()
+        };
+        let item_group = if item_group.trim().is_empty() {
+            "All Item Groups"
+        } else {
+            item_group.trim()
+        };
+        let payload = serde_json::json!({
+            "item_code": code,
+            "item_name": name,
+            "stock_uom": uom,
+            "is_stock_item": 1,
+            "item_group": item_group,
+        });
+        let response: GetResponse<ItemRow> = self
+            .admin_json_request(reqwest::Method::POST, "/api/resource/Item", payload)
+            .await?;
+        Ok(supplier_item(response.data, &self.default_warehouse))
+    }
+
+    async fn update_item_group(
+        &self,
+        item_code: &str,
+        item_group: &str,
+    ) -> Result<(), AdminPortError> {
+        self.admin_empty_request(
+            reqwest::Method::PUT,
+            &format!(
+                "/api/resource/Item/{}",
+                urlencoding::encode(item_code.trim())
+            ),
+            serde_json::json!({"item_group": item_group.trim()}),
+        )
+        .await
+    }
+}
+
 impl ErpnextClient {
     async fn admin_get_json<T: for<'de> Deserialize<'de>>(
         &self,
@@ -273,6 +537,60 @@ impl ErpnextClient {
             return Err(AdminPortError::LookupFailed);
         }
         serde_json::from_str(&body).map_err(|_| AdminPortError::LookupFailed)
+    }
+
+    async fn admin_json_request<T: for<'de> Deserialize<'de>>(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        payload: serde_json::Value,
+    ) -> Result<T, AdminPortError> {
+        let response = self
+            .http
+            .request(method, format!("{}{}", self.base_url, path))
+            .header(reqwest::header::AUTHORIZATION, self.auth_header())
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|_| AdminPortError::LookupFailed)?;
+        let status = response.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Err(AdminPortError::NotFound);
+        }
+        let body = response
+            .text()
+            .await
+            .map_err(|_| AdminPortError::LookupFailed)?;
+        if !status.is_success() {
+            return Err(AdminPortError::LookupFailed);
+        }
+        serde_json::from_str(&body).map_err(|_| AdminPortError::LookupFailed)
+    }
+
+    async fn admin_empty_request(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        payload: serde_json::Value,
+    ) -> Result<(), AdminPortError> {
+        let mut request = self
+            .http
+            .request(method, format!("{}{}", self.base_url, path))
+            .header(reqwest::header::AUTHORIZATION, self.auth_header());
+        if !payload.is_null() {
+            request = request.json(&payload);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|_| AdminPortError::LookupFailed)?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(AdminPortError::NotFound);
+        }
+        response
+            .error_for_status()
+            .map(|_| ())
+            .map_err(|_| AdminPortError::LookupFailed)
     }
 }
 
@@ -322,6 +640,40 @@ struct ItemRow {
 #[derive(Debug, Deserialize)]
 struct ItemSupplierRow {
     parent: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ItemSuppliersRow {
+    #[serde(default)]
+    default_supplier: String,
+    #[serde(default)]
+    supplier_items: Vec<ItemSupplierChildRow>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ItemSupplierChildRow {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    supplier: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ItemCustomersRow {
+    #[serde(default)]
+    customer_items: Vec<ItemCustomerChildRow>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ItemCustomerChildRow {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    customer_name: String,
+    #[serde(default)]
+    customer_group: String,
+    #[serde(default)]
+    ref_code: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -443,4 +795,8 @@ fn item_or_filters(query: &str) -> String {
 
 fn like_pattern(query: &str) -> String {
     format!("%{}%", query.trim().replace('"', ""))
+}
+
+fn upsert_phone_in_details(_details: &str, phone: &str) -> String {
+    format!("Telefon: {}", phone.trim())
 }
