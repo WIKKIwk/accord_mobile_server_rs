@@ -1,3 +1,4 @@
+mod ai_search;
 mod archive;
 mod authz;
 mod confirm;
@@ -8,6 +9,7 @@ mod query;
 mod read;
 mod unannounced;
 
+pub use ai_search::ai_search_suggestion;
 pub use archive::{archive, archive_pdf};
 pub use confirm::confirm;
 pub use customer_issue::{customer_issue_batch_create, customer_issue_create};

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::ai::werka_search::WerkaAiSearchService;
 use crate::config::AppConfig;
 use crate::core::auth::service::AuthService;
 use crate::core::profile::service::ProfileService;
@@ -27,6 +28,14 @@ impl AppState {
             config.session_store_path.clone(),
             config.session_ttl_seconds,
         );
+        let ai_key = std::env::var("GEMINI_API_KEY").unwrap_or_default();
+        if !ai_key.trim().is_empty() {
+            werka = werka.with_ai_search(Arc::new(WerkaAiSearchService::new(
+                &ai_key,
+                &std::env::var("GEMINI_VISION_MODEL").unwrap_or_default(),
+                config.erp_timeout,
+            )));
+        }
 
         if config.erp_configured() {
             let admin_state_store = Arc::new(AdminSupplierStateStore::new(

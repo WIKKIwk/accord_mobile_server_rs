@@ -1,3 +1,4 @@
+mod ai_search;
 mod confirm;
 #[cfg(test)]
 mod customer_issue_tests;

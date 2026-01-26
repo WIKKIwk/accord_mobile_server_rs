@@ -13,6 +13,8 @@ mod router_tests;
 #[cfg(test)]
 mod supplier_unannounced_route_tests;
 #[cfg(test)]
+mod werka_ai_search_route_tests;
+#[cfg(test)]
 mod werka_archive_route_tests;
 #[cfg(test)]
 mod werka_confirm_route_tests;

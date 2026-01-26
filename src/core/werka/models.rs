@@ -220,6 +220,13 @@ pub struct ConfirmReceiptRequest {
     pub return_comment: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WerkaAiSearchSuggestion {
+    pub display_query: String,
+    pub background_queries: Vec<String>,
+    pub visible_text: String,
+}
+
 fn is_zero(value: &f64) -> bool {
     *value == 0.0
 }

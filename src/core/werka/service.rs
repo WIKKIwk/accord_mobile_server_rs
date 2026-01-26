@@ -10,8 +10,8 @@ use crate::core::werka::models::{
 use crate::core::werka::ports::{
     CreateDeliveryNoteInput, CreatePurchaseReceiptInput, CustomerIssueSourceLookup,
     DeliveryNoteStateUpdate, NotificationDetailLookup, NotificationDetailWriter,
-    SupplierUnannouncedWriter, WerkaConfirmWriter, WerkaCustomerIssueWriter, WerkaHomeLookup,
-    WerkaPortError, WerkaSupplierAdminStateLookup, WerkaUnannouncedWriter,
+    SupplierUnannouncedWriter, WerkaAiSearch, WerkaConfirmWriter, WerkaCustomerIssueWriter,
+    WerkaHomeLookup, WerkaPortError, WerkaSupplierAdminStateLookup, WerkaUnannouncedWriter,
 };
 use crate::core::werka::unannounced::{
     format_notification_comment, purchase_receipt_to_dispatch_record, supplier_admin_state,
@@ -31,6 +31,7 @@ pub struct WerkaService {
     unannounced_writer: Option<Arc<dyn WerkaUnannouncedWriter>>,
     pub(crate) supplier_unannounced_writer: Option<Arc<dyn SupplierUnannouncedWriter>>,
     pub(crate) confirm_writer: Option<Arc<dyn WerkaConfirmWriter>>,
+    pub(crate) ai_search: Option<Arc<dyn WerkaAiSearch>>,
     pub(crate) notification_detail_writer: Option<Arc<dyn NotificationDetailWriter>>,
     pub(crate) notification_detail_lookup: Option<Arc<dyn NotificationDetailLookup>>,
     supplier_admin_state_lookup: Option<Arc<dyn WerkaSupplierAdminStateLookup>>,
@@ -78,6 +79,11 @@ impl WerkaService {
 
     pub fn with_confirm_writer(mut self, writer: Arc<dyn WerkaConfirmWriter>) -> Self {
         self.confirm_writer = Some(writer);
+        self
+    }
+
+    pub fn with_ai_search(mut self, search: Arc<dyn WerkaAiSearch>) -> Self {
+        self.ai_search = Some(search);
         self
     }
 
