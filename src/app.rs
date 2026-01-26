@@ -5,12 +5,14 @@ use crate::config::AppConfig;
 use crate::core::auth::service::AuthService;
 use crate::core::customer::service::CustomerService;
 use crate::core::profile::service::ProfileService;
+use crate::core::push::service::PushService;
 use crate::core::session::manager::SessionManager;
 use crate::core::werka::service::WerkaService;
 use crate::erpdb::reader::DirectDbReader;
 use crate::erpnext::client::ErpnextClient;
 use crate::store::admin_state_store::AdminSupplierStateStore;
 use crate::store::profile_store::ProfileStore;
+use crate::store::push_token_store::PushTokenStore;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -18,6 +20,7 @@ pub struct AppState {
     pub auth: AuthService,
     pub customer: CustomerService,
     pub profiles: ProfileService,
+    pub push: PushService,
     pub werka: WerkaService,
     pub sessions: SessionManager,
 }
@@ -27,7 +30,9 @@ impl AppState {
         let mut auth = AuthService::new(&config);
         let mut customer = CustomerService::new();
         let profile_store = Arc::new(ProfileStore::new(config.profile_store_path.clone()));
+        let push_token_store = Arc::new(PushTokenStore::new(config.push_token_store_path.clone()));
         let mut profiles = ProfileService::new(config.erp_url.clone()).with_store(profile_store);
+        let push = PushService::new(push_token_store);
         let mut werka = WerkaService::new();
         let sessions = SessionManager::persistent(
             config.session_store_path.clone(),
@@ -95,6 +100,7 @@ impl AppState {
             auth,
             customer,
             profiles,
+            push,
             werka,
             sessions,
         }
