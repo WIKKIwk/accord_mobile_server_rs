@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::core::auth::models::{Principal, PrincipalRole};
+use crate::core::push::models::PushTokenRecord;
 use crate::core::push::ports::{
     NoopPushSender, PushSendError, PushSenderPort, PushServiceError, PushTokenStorePort,
 };
@@ -51,6 +52,10 @@ impl PushService {
         }
         self.store.delete(&push_token_key(principal), token).await?;
         Ok(())
+    }
+
+    pub async fn list(&self, key: &str) -> Result<Vec<PushTokenRecord>, PushServiceError> {
+        Ok(self.store.list(key).await?)
     }
 
     pub async fn send_to_key(

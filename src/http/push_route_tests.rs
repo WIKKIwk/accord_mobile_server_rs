@@ -1,5 +1,7 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use async_trait::async_trait;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use tower::ServiceExt;
@@ -8,6 +10,9 @@ use super::router::build_router;
 use crate::app::AppState;
 use crate::config::AppConfig;
 use crate::core::auth::models::{Principal, PrincipalRole};
+use crate::core::push::models::PushTokenRecord;
+use crate::core::push::ports::{PushStoreError, PushTokenStorePort};
+use crate::core::push::service::PushService;
 use crate::core::session::manager::SessionManager;
 
 fn test_state() -> AppState {
@@ -99,6 +104,44 @@ async fn push_token_registers_supplier_token_like_go() {
 }
 
 #[tokio::test]
+async fn push_token_register_requires_body_token_like_go() {
+    let mut state = test_state();
+    state.push = PushService::new(Arc::new(FailingReadPushStore));
+    let token = session(&state, PrincipalRole::Supplier, "SUP-001").await;
+    let response = build_router(state)
+        .oneshot(request(
+            "POST",
+            "/v1/mobile/push/token",
+            &token,
+            r#"{"token":"   ","platform":"ios"}"#,
+        ))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(json_body(response).await["error"], "token is required");
+}
+
+#[tokio::test]
+async fn push_token_register_read_failure_uses_go_error() {
+    let mut state = test_state();
+    state.push = PushService::new(Arc::new(FailingReadPushStore));
+    let token = session(&state, PrincipalRole::Supplier, "SUP-001").await;
+    let response = build_router(state)
+        .oneshot(request(
+            "POST",
+            "/v1/mobile/push/token",
+            &token,
+            r#"{"token":"device-1","platform":"ios"}"#,
+        ))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(json_body(response).await["error"], "push token read failed");
+}
+
+#[tokio::test]
 async fn push_token_delete_requires_query_token_like_go() {
     let state = test_state();
     let token = session(&state, PrincipalRole::Supplier, "SUP-001").await;
@@ -109,6 +152,25 @@ async fn push_token_delete_requires_query_token_like_go() {
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(json_body(response).await["error"], "token is required");
+}
+
+#[tokio::test]
+async fn push_token_delete_read_failure_uses_go_error() {
+    let mut state = test_state();
+    state.push = PushService::new(Arc::new(FailingReadPushStore));
+    let token = session(&state, PrincipalRole::Supplier, "SUP-001").await;
+    let response = build_router(state)
+        .oneshot(request(
+            "DELETE",
+            "/v1/mobile/push/token?token=device-1",
+            &token,
+            "",
+        ))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(json_body(response).await["error"], "push token read failed");
 }
 
 #[tokio::test]
@@ -160,4 +222,26 @@ fn unique_path() -> PathBuf {
         std::process::id(),
         time::OffsetDateTime::now_utc().unix_timestamp_nanos()
     ))
+}
+
+struct FailingReadPushStore;
+
+#[async_trait]
+impl PushTokenStorePort for FailingReadPushStore {
+    async fn move_token_to_key(
+        &self,
+        _target_key: &str,
+        _token: &str,
+        _platform: &str,
+    ) -> Result<(), PushStoreError> {
+        Ok(())
+    }
+
+    async fn delete(&self, _key: &str, _token: &str) -> Result<(), PushStoreError> {
+        Ok(())
+    }
+
+    async fn list(&self, _key: &str) -> Result<Vec<PushTokenRecord>, PushStoreError> {
+        Err(PushStoreError::StoreFailed)
+    }
 }

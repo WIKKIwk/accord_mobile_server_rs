@@ -9,6 +9,7 @@ use crate::app::AppState;
 use crate::core::auth::models::{Principal, PrincipalRole};
 use crate::core::push::models::PushTokenRegisterRequest;
 use crate::core::push::ports::PushServiceError;
+use crate::core::push::service::push_token_key;
 use crate::http::handlers::auth::{ErrorResponse, bearer_token};
 
 pub async fn token(
@@ -32,20 +33,32 @@ pub async fn token(
                         }),
                     )
                 })?;
+            if request.token.trim().is_empty() {
+                return Err(token_required());
+            }
+            let key = push_token_key(&principal);
+            state.push.list(&key).await.map_err(read_error)?;
             state
                 .push
                 .register(&principal, &request.token, &request.platform)
                 .await
                 .map_err(register_error)?;
+            state.push.list(&key).await.map_err(read_error)?;
             Ok(Json(OkResponse { ok: true }))
         }
         Method::DELETE => {
             let token = query.token.as_deref().unwrap_or("").trim();
+            if token.is_empty() {
+                return Err(token_required());
+            }
+            let key = push_token_key(&principal);
+            state.push.list(&key).await.map_err(read_error)?;
             state
                 .push
                 .delete(&principal, token)
                 .await
                 .map_err(delete_error)?;
+            state.push.list(&key).await.map_err(read_error)?;
             Ok(Json(OkResponse { ok: true }))
         }
         _ => Err((
@@ -78,12 +91,7 @@ fn require_push_role(principal: &Principal) -> Result<(), (StatusCode, Json<Erro
 
 fn register_error(error: PushServiceError) -> (StatusCode, Json<ErrorResponse>) {
     match error {
-        PushServiceError::TokenRequired => (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "token is required",
-            }),
-        ),
+        PushServiceError::TokenRequired => token_required(),
         PushServiceError::StoreFailed => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
@@ -95,12 +103,7 @@ fn register_error(error: PushServiceError) -> (StatusCode, Json<ErrorResponse>) 
 
 fn delete_error(error: PushServiceError) -> (StatusCode, Json<ErrorResponse>) {
     match error {
-        PushServiceError::TokenRequired => (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "token is required",
-            }),
-        ),
+        PushServiceError::TokenRequired => token_required(),
         PushServiceError::StoreFailed => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
@@ -108,6 +111,24 @@ fn delete_error(error: PushServiceError) -> (StatusCode, Json<ErrorResponse>) {
             }),
         ),
     }
+}
+
+fn read_error(_: PushServiceError) -> (StatusCode, Json<ErrorResponse>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ErrorResponse {
+            error: "push token read failed",
+        }),
+    )
+}
+
+fn token_required() -> (StatusCode, Json<ErrorResponse>) {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(ErrorResponse {
+            error: "token is required",
+        }),
+    )
 }
 
 fn unauthorized() -> (StatusCode, Json<ErrorResponse>) {
