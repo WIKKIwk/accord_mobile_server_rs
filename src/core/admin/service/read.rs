@@ -61,7 +61,14 @@ impl AdminService {
         let read = self.read_port()?;
         let assigned_items = match read.assigned_supplier_items(&entry.ref_, 200).await {
             Ok(items) => items,
-            Err(_) => read.items_by_codes(&state.assigned_item_codes).await?,
+            Err(AdminPortError::PermissionDenied) => {
+                if state.assigned_item_codes.is_empty() {
+                    Vec::new()
+                } else {
+                    read.items_by_codes(&state.assigned_item_codes).await?
+                }
+            }
+            Err(err) => return Err(err),
         };
         let code = self.supplier_code(&entry, &state)?;
         let now = OffsetDateTime::now_utc();
@@ -87,7 +94,10 @@ impl AdminService {
         let read = self.read_port()?;
         match read.assigned_supplier_items(&entry.ref_, limit).await {
             Ok(items) => Ok(items),
-            Err(_) if !state.assigned_item_codes.is_empty() => {
+            Err(AdminPortError::PermissionDenied) if state.assigned_item_codes.is_empty() => {
+                Ok(Vec::new())
+            }
+            Err(AdminPortError::PermissionDenied) => {
                 read.items_by_codes(&state.assigned_item_codes).await
             }
             Err(err) => Err(err),

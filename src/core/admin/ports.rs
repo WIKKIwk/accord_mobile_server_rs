@@ -147,6 +147,8 @@ pub trait AdminWritePort: Send + Sync {
 pub enum AdminPortError {
     #[error("not found")]
     NotFound,
+    #[error("permission denied")]
+    PermissionDenied,
     #[error("lookup failed")]
     LookupFailed,
     #[error("code regenerate cooldown")]

@@ -270,6 +270,80 @@ async fn admin_supplier_detail_returns_assigned_items_like_go() {
 }
 
 #[tokio::test]
+async fn admin_supplier_detail_uses_permission_fallback_like_go() {
+    let mut state = test_state();
+    state.admin = AdminService::new(&state.config)
+        .with_read_port(Arc::new(AssignedItemsErrorReadPort::permission()))
+        .with_write_port(Arc::new(FakeAdminReadPort))
+        .with_state_port(Arc::new(FakeAdminStatePort::new()));
+    let token = session(&state, PrincipalRole::Admin).await;
+
+    let response = build_router(state)
+        .oneshot(request(
+            "GET",
+            "/v1/mobile/admin/suppliers/detail?ref=SUP-001",
+            &token,
+        ))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let value = json_body(response).await;
+    assert_eq!(value["assigned_items"].as_array().expect("items").len(), 2);
+    assert_eq!(value["assigned_items"][0]["code"], "ITEM-001");
+}
+
+#[tokio::test]
+async fn admin_supplier_detail_does_not_fallback_on_non_permission_error() {
+    let mut state = test_state();
+    state.admin = AdminService::new(&state.config)
+        .with_read_port(Arc::new(AssignedItemsErrorReadPort::lookup_failed()))
+        .with_write_port(Arc::new(FakeAdminReadPort))
+        .with_state_port(Arc::new(FakeAdminStatePort::new()));
+    let token = session(&state, PrincipalRole::Admin).await;
+
+    let response = build_router(state)
+        .oneshot(request(
+            "GET",
+            "/v1/mobile/admin/suppliers/detail?ref=SUP-001",
+            &token,
+        ))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(json_body(response).await["error"], "supplier detail failed");
+}
+
+#[tokio::test]
+async fn admin_assigned_supplier_items_permission_without_cache_is_empty_like_go() {
+    let mut state = test_state();
+    state.admin = AdminService::new(&state.config)
+        .with_read_port(Arc::new(AssignedItemsErrorReadPort::permission()))
+        .with_write_port(Arc::new(FakeAdminReadPort))
+        .with_state_port(Arc::new(FakeAdminStatePort::new()));
+    let token = session(&state, PrincipalRole::Admin).await;
+
+    let response = build_router(state)
+        .oneshot(request(
+            "GET",
+            "/v1/mobile/admin/suppliers/items/assigned?ref=SUP-002",
+            &token,
+        ))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        json_body(response)
+            .await
+            .as_array()
+            .expect("items")
+            .is_empty()
+    );
+}
+
+#[tokio::test]
 async fn admin_customers_and_items_read_like_go() {
     let state = test_state();
     let token = session(&state, PrincipalRole::Admin).await;
@@ -866,6 +940,92 @@ impl AdminReadPort for CustomerItemsFailReadPort {
         _limit: usize,
     ) -> Result<Vec<SupplierItem>, AdminPortError> {
         Err(AdminPortError::LookupFailed)
+    }
+}
+
+struct AssignedItemsErrorReadPort {
+    permission: bool,
+}
+
+impl AssignedItemsErrorReadPort {
+    fn permission() -> Self {
+        Self { permission: true }
+    }
+
+    fn lookup_failed() -> Self {
+        Self { permission: false }
+    }
+}
+
+#[async_trait]
+impl AdminReadPort for AssignedItemsErrorReadPort {
+    async fn suppliers_page(
+        &self,
+        query: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<AdminDirectoryEntry>, AdminPortError> {
+        FakeAdminReadPort.suppliers_page(query, limit, offset).await
+    }
+
+    async fn supplier_by_ref(&self, ref_: &str) -> Result<AdminDirectoryEntry, AdminPortError> {
+        FakeAdminReadPort.supplier_by_ref(ref_).await
+    }
+
+    async fn customers_page(
+        &self,
+        query: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<AdminDirectoryEntry>, AdminPortError> {
+        FakeAdminReadPort.customers_page(query, limit, offset).await
+    }
+
+    async fn customer_by_ref(&self, ref_: &str) -> Result<AdminDirectoryEntry, AdminPortError> {
+        FakeAdminReadPort.customer_by_ref(ref_).await
+    }
+
+    async fn items_page(
+        &self,
+        query: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<SupplierItem>, AdminPortError> {
+        FakeAdminReadPort.items_page(query, limit, offset).await
+    }
+
+    async fn items_by_codes(
+        &self,
+        item_codes: &[String],
+    ) -> Result<Vec<SupplierItem>, AdminPortError> {
+        FakeAdminReadPort.items_by_codes(item_codes).await
+    }
+
+    async fn item_groups(&self, query: &str, limit: usize) -> Result<Vec<String>, AdminPortError> {
+        FakeAdminReadPort.item_groups(query, limit).await
+    }
+
+    async fn assigned_supplier_items(
+        &self,
+        _supplier_ref: &str,
+        _limit: usize,
+    ) -> Result<Vec<SupplierItem>, AdminPortError> {
+        if self.permission {
+            Err(AdminPortError::PermissionDenied)
+        } else {
+            Err(AdminPortError::LookupFailed)
+        }
+    }
+
+    async fn customer_items(
+        &self,
+        customer_ref: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<SupplierItem>, AdminPortError> {
+        FakeAdminReadPort
+            .customer_items(customer_ref, query, limit)
+            .await
     }
 }
 
