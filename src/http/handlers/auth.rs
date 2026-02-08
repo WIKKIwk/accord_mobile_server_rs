@@ -1,7 +1,9 @@
 use axum::Json;
+use axum::body::Bytes;
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, Method, StatusCode};
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use crate::app::AppState;
 use crate::core::auth::models::{LoginRequest, LoginResponse, Principal, PrincipalRole};
@@ -9,9 +11,14 @@ use crate::core::auth::service::AuthError;
 
 pub async fn login(
     State(state): State<AppState>,
+    method: Method,
     headers: HeaderMap,
-    Json(request): Json<LoginRequest>,
+    body: Bytes,
 ) -> Result<Json<LoginResponse>, (StatusCode, Json<ErrorResponse>)> {
+    if method != Method::POST {
+        return Err(method_not_allowed());
+    }
+    let request: LoginRequest = parse_json(&body)?;
     let mut principal = state
         .auth
         .login(request.phone.trim(), request.code.trim())
@@ -46,8 +53,12 @@ pub async fn login(
 
 pub async fn logout(
     State(state): State<AppState>,
+    method: Method,
     headers: HeaderMap,
 ) -> Result<Json<OkResponse>, (StatusCode, Json<ErrorResponse>)> {
+    if method != Method::POST {
+        return Err(method_not_allowed());
+    }
     let token = bearer_token(&headers).ok_or_else(unauthorized)?;
     state.sessions.delete(&token).await;
 
@@ -131,6 +142,23 @@ fn unauthorized() -> (StatusCode, Json<ErrorResponse>) {
             error: "unauthorized",
         }),
     )
+}
+
+fn method_not_allowed() -> (StatusCode, Json<ErrorResponse>) {
+    (
+        StatusCode::METHOD_NOT_ALLOWED,
+        Json(ErrorResponse {
+            error: "method not allowed",
+        }),
+    )
+}
+
+fn bad_request(error: &'static str) -> (StatusCode, Json<ErrorResponse>) {
+    (StatusCode::BAD_REQUEST, Json(ErrorResponse { error }))
+}
+
+fn parse_json<T: DeserializeOwned>(body: &[u8]) -> Result<T, (StatusCode, Json<ErrorResponse>)> {
+    serde_json::from_slice(body).map_err(|_| bad_request("invalid json"))
 }
 
 fn login_error(error: AuthError) -> (StatusCode, Json<ErrorResponse>) {

@@ -1,5 +1,5 @@
 use axum::extract::State;
-use axum::routing::{any, get, post};
+use axum::routing::any;
 use axum::{Json, Router};
 use serde::Serialize;
 use tower_http::trace::TraceLayer;
@@ -11,10 +11,10 @@ use crate::http::handlers::{
 
 pub fn build_router(state: AppState) -> Router {
     Router::new()
-        .route("/healthz", get(healthz))
-        .route("/v1/mobile/auth/login", post(auth::login))
-        .route("/v1/mobile/auth/logout", post(auth::logout))
-        .route("/v1/mobile/me", get(auth::me))
+        .route("/healthz", any(healthz))
+        .route("/v1/mobile/auth/login", any(auth::login))
+        .route("/v1/mobile/auth/logout", any(auth::logout))
+        .route("/v1/mobile/me", any(auth::me))
         .route("/v1/mobile/profile", any(profile::profile))
         .route("/v1/mobile/profile/avatar", any(profile::avatar_upload))
         .route("/v1/mobile/push/token", any(push::token))
