@@ -20,7 +20,7 @@ impl SupplierLookup for ErpnextClient {
         let mut request = self
             .http
             .get(format!("{}/api/resource/Supplier", self.base_url()))
-            .header(reqwest::header::AUTHORIZATION, self.auth_header())
+            .header(reqwest::header::AUTHORIZATION, self.auth_header().await)
             .query(&[
                 (
                     "fields",
@@ -69,7 +69,7 @@ impl ProfileLookup for ErpnextClient {
                 self.base_url(),
                 urlencoding::encode(id.trim())
             ))
-            .header(reqwest::header::AUTHORIZATION, self.auth_header())
+            .header(reqwest::header::AUTHORIZATION, self.auth_header().await)
             .send()
             .await
             .map_err(|_| ProfilePortError::LookupFailed)?
@@ -109,7 +109,7 @@ impl ProfileLookup for ErpnextClient {
         let response = self
             .http
             .get(endpoint)
-            .header(reqwest::header::AUTHORIZATION, self.auth_header())
+            .header(reqwest::header::AUTHORIZATION, self.auth_header().await)
             .send()
             .await
             .map_err(|_| ProfilePortError::LookupFailed)?
@@ -159,7 +159,7 @@ impl ProfileLookup for ErpnextClient {
         let payload = self
             .http
             .post(format!("{}/api/method/upload_file", self.base_url()))
-            .header(reqwest::header::AUTHORIZATION, self.auth_header())
+            .header(reqwest::header::AUTHORIZATION, self.auth_header().await)
             .header(reqwest::header::ACCEPT, "application/json")
             .multipart(form)
             .send()
@@ -180,7 +180,7 @@ impl ProfileLookup for ErpnextClient {
                 self.base_url(),
                 urlencoding::encode(supplier_id)
             ))
-            .header(reqwest::header::AUTHORIZATION, self.auth_header())
+            .header(reqwest::header::AUTHORIZATION, self.auth_header().await)
             .json(&serde_json::json!({ "image": file_url }))
             .send()
             .await

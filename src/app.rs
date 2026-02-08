@@ -54,11 +54,12 @@ impl AppState {
             )));
         }
 
+        let mut erp_client = None;
         if config.erp_configured() {
             let admin_state_store = Arc::new(AdminSupplierStateStore::new(
                 config.admin_supplier_store_path.clone(),
             ));
-            let erp_client = Arc::new(
+            let client = Arc::new(
                 ErpnextClient::new(
                     config.erp_url.clone(),
                     config.erp_api_key.clone(),
@@ -68,23 +69,24 @@ impl AppState {
                 .with_default_warehouse(config.default_target_warehouse.clone()),
             );
             admin = admin
-                .with_read_port(erp_client.clone())
-                .with_write_port(erp_client.clone())
-                .with_erp_config_sink(erp_client.clone())
+                .with_read_port(client.clone())
+                .with_write_port(client.clone())
+                .with_erp_config_sink(client.clone())
                 .with_state_port(admin_state_store.clone());
-            auth = auth.with_supplier_dependencies(erp_client.clone(), admin_state_store.clone());
-            auth = auth.with_customer_dependencies(erp_client.clone(), admin_state_store.clone());
-            customer = customer.with_delivery_port(erp_client.clone());
-            profiles = profiles.with_erp_lookup(erp_client.clone());
+            auth = auth.with_supplier_dependencies(client.clone(), admin_state_store.clone());
+            auth = auth.with_customer_dependencies(client.clone(), admin_state_store.clone());
+            customer = customer.with_delivery_port(client.clone());
+            profiles = profiles.with_erp_lookup(client.clone());
             werka = werka
-                .with_customer_issue_writer(erp_client.clone())
-                .with_unannounced_writer(erp_client.clone())
-                .with_supplier_unannounced_writer(erp_client.clone())
-                .with_supplier_purchase_receipt_lookup(erp_client.clone())
-                .with_supplier_item_lookup(erp_client.clone())
-                .with_confirm_writer(erp_client.clone())
-                .with_notification_detail_writer(erp_client.clone())
+                .with_customer_issue_writer(client.clone())
+                .with_unannounced_writer(client.clone())
+                .with_supplier_unannounced_writer(client.clone())
+                .with_supplier_purchase_receipt_lookup(client.clone())
+                .with_supplier_item_lookup(client.clone())
+                .with_confirm_writer(client.clone())
+                .with_notification_detail_writer(client.clone())
                 .with_supplier_admin_state_lookup(admin_state_store);
+            erp_client = Some(client);
         }
         match config.direct_db_config() {
             Ok(Some(db_config)) => {
@@ -95,6 +97,9 @@ impl AppState {
                     "direct DB read enabled for Werka home"
                 );
                 let direct_reader = Arc::new(DirectDbReader::new(db_config));
+                if let Some(client) = &erp_client {
+                    client.set_credential_provider(direct_reader.clone());
+                }
                 admin = admin
                     .with_read_port(direct_reader.clone())
                     .with_credential_port(direct_reader.clone());

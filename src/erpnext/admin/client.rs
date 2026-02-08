@@ -9,7 +9,7 @@ impl ErpnextClient {
         let response = self
             .http
             .get(format!("{}{}", self.base_url(), path))
-            .header(reqwest::header::AUTHORIZATION, self.auth_header())
+            .header(reqwest::header::AUTHORIZATION, self.auth_header().await)
             .query(query)
             .send()
             .await
@@ -37,7 +37,7 @@ impl ErpnextClient {
         let response = self
             .http
             .request(method, format!("{}{}", self.base_url(), path))
-            .header(reqwest::header::AUTHORIZATION, self.auth_header())
+            .header(reqwest::header::AUTHORIZATION, self.auth_header().await)
             .json(&payload)
             .send()
             .await
@@ -65,7 +65,7 @@ impl ErpnextClient {
         let mut request = self
             .http
             .request(method, format!("{}{}", self.base_url(), path))
-            .header(reqwest::header::AUTHORIZATION, self.auth_header());
+            .header(reqwest::header::AUTHORIZATION, self.auth_header().await);
         if !payload.is_null() {
             request = request.json(&payload);
         }

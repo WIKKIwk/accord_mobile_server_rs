@@ -2,12 +2,14 @@ use std::sync::Arc;
 use std::sync::RwLock as StdRwLock;
 use std::time::Duration;
 
+use crate::core::admin::ports::AdminCredentialPort;
 use crate::core::admin::ports::AdminErpConfigSink;
 use tokio::sync::RwLock;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ErpnextClient {
     runtime: Arc<StdRwLock<ErpnextRuntimeConfig>>,
+    credential_provider: Arc<StdRwLock<Option<Arc<dyn AdminCredentialPort>>>>,
     pub(crate) http: reqwest::Client,
     pub(crate) delivery_note_state_fields_ensured: Arc<RwLock<bool>>,
 }
@@ -29,6 +31,7 @@ impl ErpnextClient {
                 api_secret: api_secret.trim().to_string(),
                 default_warehouse: String::new(),
             })),
+            credential_provider: Arc::new(StdRwLock::new(None)),
             http: reqwest::Client::builder()
                 .timeout(timeout)
                 .build()
@@ -43,6 +46,13 @@ impl ErpnextClient {
             .expect("erp runtime lock")
             .default_warehouse = default_warehouse.trim().to_string();
         self
+    }
+
+    pub fn set_credential_provider(&self, provider: Arc<dyn AdminCredentialPort>) {
+        *self
+            .credential_provider
+            .write()
+            .expect("erp credential provider lock") = Some(provider);
     }
 
     pub(crate) fn base_url(&self) -> String {
@@ -61,7 +71,22 @@ impl ErpnextClient {
             .clone()
     }
 
-    pub(crate) fn auth_header(&self) -> String {
+    pub(crate) async fn auth_header(&self) -> String {
+        let provider = self
+            .credential_provider
+            .read()
+            .expect("erp credential provider lock")
+            .clone();
+        if let Some(provider) = provider {
+            if let Ok((api_key, api_secret)) = provider.admin_api_auth("Administrator").await {
+                let api_key = api_key.trim();
+                let api_secret = api_secret.trim();
+                if !api_key.is_empty() && !api_secret.is_empty() {
+                    return format!("token {api_key}:{api_secret}");
+                }
+            }
+        }
+
         let runtime = self.runtime.read().expect("erp runtime lock");
         format!("token {}:{}", runtime.api_key, runtime.api_secret)
     }

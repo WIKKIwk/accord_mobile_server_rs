@@ -169,7 +169,7 @@ impl ErpnextClient {
         let response = self
             .http
             .get(format!("{}{}", self.base_url(), path))
-            .header(reqwest::header::AUTHORIZATION, self.auth_header())
+            .header(reqwest::header::AUTHORIZATION, self.auth_header().await)
             .query(query)
             .send()
             .await

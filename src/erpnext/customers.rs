@@ -16,7 +16,7 @@ impl CustomerLookup for ErpnextClient {
         let mut request = self
             .http
             .get(format!("{}/api/resource/Customer", self.base_url()))
-            .header(reqwest::header::AUTHORIZATION, self.auth_header())
+            .header(reqwest::header::AUTHORIZATION, self.auth_header().await)
             .query(&[
                 (
                     "fields",
@@ -63,7 +63,7 @@ pub async fn get_customer_profile(
             client.base_url(),
             urlencoding::encode(id.trim())
         ))
-        .header(reqwest::header::AUTHORIZATION, client.auth_header())
+        .header(reqwest::header::AUTHORIZATION, client.auth_header().await)
         .send()
         .await
         .map_err(|_| ProfilePortError::LookupFailed)?
