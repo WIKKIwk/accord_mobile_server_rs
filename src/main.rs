@@ -6,6 +6,8 @@ mod erpdb;
 mod erpnext;
 mod error;
 mod fcm;
+#[cfg(test)]
+mod fcm_tests;
 mod http;
 mod store;
 

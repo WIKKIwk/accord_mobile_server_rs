@@ -93,6 +93,30 @@ impl FcmPushSender {
             endpoint: format!("https://fcm.googleapis.com/v1/projects/{project_id}/messages:send"),
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_tests(
+        store: Arc<dyn PushTokenStorePort>,
+        client_email: &str,
+        private_key: &str,
+        token_uri: &str,
+        endpoint: &str,
+    ) -> Self {
+        Self {
+            store,
+            http_client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(15))
+                .build()
+                .expect("reqwest client"),
+            token_provider: ServiceAccountTokenProvider::new(ServiceAccount {
+                project_id: "demo".to_string(),
+                client_email: client_email.to_string(),
+                private_key: private_key.to_string(),
+                token_uri: token_uri.to_string(),
+            }),
+            endpoint: endpoint.to_string(),
+        }
+    }
 }
 
 #[async_trait]
