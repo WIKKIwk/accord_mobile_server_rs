@@ -18,7 +18,9 @@ use crate::core::admin::ports::{
 use crate::core::admin::service::AdminService;
 use crate::core::auth::models::{Principal, PrincipalRole};
 use crate::core::session::manager::SessionManager;
-use crate::core::werka::models::SupplierItem;
+use crate::core::werka::models::{DispatchRecord, SupplierItem};
+use crate::core::werka::ports::{WerkaHomeLookup, WerkaPortError};
+use crate::core::werka::service::WerkaService;
 
 #[tokio::test]
 async fn admin_settings_requires_admin_like_go() {
@@ -283,6 +285,39 @@ async fn admin_supplier_phone_skips_write_for_removed_supplier_like_go() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
     assert_eq!(json_body(response).await["error"], "supplier not found");
     assert_eq!(writes.supplier_phone_updates.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn admin_activity_fails_without_history_provider_like_go() {
+    let state = test_state();
+    let token = session(&state, PrincipalRole::Admin).await;
+
+    let response = build_router(state)
+        .oneshot(request("GET", "/v1/mobile/admin/activity", &token))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(json_body(response).await["error"], "admin activity failed");
+}
+
+#[tokio::test]
+async fn admin_activity_limits_history_to_30_like_go() {
+    let mut state = test_state();
+    state.werka = WerkaService::new().with_lookup(Arc::new(ActivityLookup));
+    let token = session(&state, PrincipalRole::Admin).await;
+
+    let response = build_router(state)
+        .oneshot(request("GET", "/v1/mobile/admin/activity", &token))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let value = json_body(response).await;
+    let items = value.as_array().expect("activity array");
+    assert_eq!(items.len(), 30);
+    assert_eq!(items[0]["id"], "REC-000");
+    assert_eq!(items[29]["id"], "REC-029");
 }
 
 #[tokio::test]
@@ -695,6 +730,26 @@ impl AdminReadPort for CustomerItemsFailReadPort {
         _limit: usize,
     ) -> Result<Vec<SupplierItem>, AdminPortError> {
         Err(AdminPortError::LookupFailed)
+    }
+}
+
+struct ActivityLookup;
+
+#[async_trait]
+impl WerkaHomeLookup for ActivityLookup {
+    async fn werka_history(&self) -> Result<Vec<DispatchRecord>, WerkaPortError> {
+        Ok((0..35)
+            .map(|index| DispatchRecord {
+                id: format!("REC-{index:03}"),
+                supplier_name: "Supplier".to_string(),
+                item_code: "ITEM-001".to_string(),
+                item_name: "Rice".to_string(),
+                uom: "Kg".to_string(),
+                status: "confirmed".to_string(),
+                created_label: "2026-02-08 12:00".to_string(),
+                ..DispatchRecord::default()
+            })
+            .collect())
     }
 }
 

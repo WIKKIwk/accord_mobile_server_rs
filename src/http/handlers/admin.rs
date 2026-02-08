@@ -305,13 +305,15 @@ pub async fn activity(
         return Err(method_not_allowed());
     }
     authorize_admin(&state, &headers).await?;
-    let history = state.werka.history().await.ok().flatten();
-    state
-        .admin
-        .activity(history)
-        .await
-        .map(Json)
-        .map_err(|_| server_error("admin activity failed"))
+    match state.werka.history().await {
+        Ok(Some(history)) => state
+            .admin
+            .activity(history)
+            .await
+            .map(Json)
+            .map_err(|_| server_error("admin activity failed")),
+        Ok(None) | Err(_) => Err(server_error("admin activity failed")),
+    }
 }
 
 pub async fn customer_phone(

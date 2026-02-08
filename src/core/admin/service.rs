@@ -417,11 +417,8 @@ impl AdminService {
         }
     }
 
-    pub async fn activity(
-        &self,
-        items: Option<AdminActivity>,
-    ) -> Result<AdminActivity, AdminPortError> {
-        Ok(items.unwrap_or_default().into_iter().take(30).collect())
+    pub async fn activity(&self, items: AdminActivity) -> Result<AdminActivity, AdminPortError> {
+        Ok(items.into_iter().take(30).collect())
     }
 
     pub async fn create_supplier(
