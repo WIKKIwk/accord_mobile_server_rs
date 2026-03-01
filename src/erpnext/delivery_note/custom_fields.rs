@@ -103,6 +103,14 @@ fn required_delivery_note_fields() -> &'static [RequiredCustomField] {
             hidden: 1,
         },
         RequiredCustomField {
+            fieldname: "accord_source_key",
+            label: "Accord Source Key",
+            fieldtype: "Data",
+            insert_after: "accord_delivery_actor",
+            options: "",
+            hidden: 1,
+        },
+        RequiredCustomField {
             fieldname: "accord_status_section",
             label: "Accord Status",
             fieldtype: "Section Break",

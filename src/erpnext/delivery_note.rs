@@ -93,6 +93,7 @@ impl WerkaCustomerIssueWriter for ErpnextClient {
         customer_ref: &str,
         marker: &str,
     ) -> Result<bool, WerkaPortError> {
+        custom_fields::ensure_delivery_note_state_fields(self).await?;
         let marker = marker.trim();
         if marker.is_empty() {
             return Ok(false);

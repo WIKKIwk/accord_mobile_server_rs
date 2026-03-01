@@ -313,8 +313,7 @@ const ADMIN_ITEMS_PAGE_SQL: &str = r#"
 const ADMIN_ITEM_GROUPS_SQL: &str = r#"
     SELECT name
     FROM `tabItem Group`
-    WHERE disabled = 0
-      AND (? = '' OR name LIKE ? ESCAPE '\\' OR item_group_name LIKE ? ESCAPE '\\')
+    WHERE ? = '' OR name LIKE ? ESCAPE '\\' OR item_group_name LIKE ? ESCAPE '\\'
     ORDER BY name ASC
     LIMIT ?
 "#;

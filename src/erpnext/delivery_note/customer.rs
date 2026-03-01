@@ -19,6 +19,9 @@ impl CustomerDeliveryPort for ErpnextClient {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<CustomerDeliveryNoteDraft>, CustomerPortError> {
+        custom_fields::ensure_delivery_note_state_fields(self)
+            .await
+            .map_err(customer_port_error)?;
         let limit = if limit == 0 || limit > 500 {
             100
         } else {

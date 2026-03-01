@@ -69,7 +69,7 @@ const SUPPLIER_PURCHASE_RECEIPT_ROWS_SQL: &str = r#"
         COALESCE(pr.supplier_name, '') AS supplier_name,
         pr.docstatus AS doc_status,
         COALESCE(pr.status, '') AS status,
-        COALESCE(pr.total_qty, 0) AS total_qty,
+        CAST(COALESCE(pr.total_qty, 0) AS DOUBLE) AS total_qty,
         COALESCE(CAST(pr.posting_date AS CHAR), '') AS posting_date,
         COALESCE(pr.supplier_delivery_note, '') AS supplier_delivery_note,
         COALESCE(pr.remarks, '') AS remarks,
@@ -77,7 +77,7 @@ const SUPPLIER_PURCHASE_RECEIPT_ROWS_SQL: &str = r#"
         COALESCE(pri.item_code, '') AS item_code,
         COALESCE(pri.item_name, '') AS item_name,
         COALESCE(pri.uom, '') AS uom,
-        COALESCE(pri.amount, 0) AS amount
+        CAST(COALESCE(pri.amount, 0) AS DOUBLE) AS amount
     FROM `tabPurchase Receipt` pr
     LEFT JOIN `tabPurchase Receipt Item` pri ON pri.parent = pr.name AND pri.idx = 1
     WHERE pr.supplier_delivery_note LIKE 'TG:%'

@@ -80,12 +80,12 @@ impl ProfileLookup for ErpnextClient {
             .map_err(|_| ProfilePortError::LookupFailed)?;
 
         Ok(SupplierProfileRecord {
-            phone: if payload.data.mobile_no.trim().is_empty() {
-                extract_phone_from_details(&payload.data.supplier_details)
+            phone: if opt_str(&payload.data.mobile_no).trim().is_empty() {
+                extract_phone_from_details(opt_str(&payload.data.supplier_details))
             } else {
-                payload.data.mobile_no.trim().to_string()
+                opt_str(&payload.data.mobile_no).trim().to_string()
             },
-            image: payload.data.image.trim().to_string(),
+            image: opt_str(&payload.data.image).trim().to_string(),
         })
     }
 
@@ -221,11 +221,11 @@ struct SupplierListResponse {
 struct SupplierListRow {
     name: String,
     #[serde(default)]
-    supplier_name: String,
+    supplier_name: Option<String>,
     #[serde(default)]
-    mobile_no: String,
+    mobile_no: Option<String>,
     #[serde(default)]
-    supplier_details: String,
+    supplier_details: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -236,11 +236,11 @@ struct SupplierGetResponse {
 #[derive(Debug, Deserialize)]
 struct SupplierGetRow {
     #[serde(default)]
-    mobile_no: String,
+    mobile_no: Option<String>,
     #[serde(default)]
-    supplier_details: String,
+    supplier_details: Option<String>,
     #[serde(default)]
-    image: String,
+    image: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -258,15 +258,18 @@ fn suppliers_from_list_response(payload: SupplierListResponse) -> Vec<SupplierRe
         .data
         .into_iter()
         .map(|row| {
-            let name = if row.supplier_name.trim().is_empty() {
+            let supplier_name = opt_str(&row.supplier_name);
+            let mobile_no = opt_str(&row.mobile_no);
+            let supplier_details = opt_str(&row.supplier_details);
+            let name = if supplier_name.trim().is_empty() {
                 row.name.trim().to_string()
             } else {
-                row.supplier_name.trim().to_string()
+                supplier_name.trim().to_string()
             };
-            let phone = if row.mobile_no.trim().is_empty() {
-                extract_phone_from_details(&row.supplier_details)
+            let phone = if mobile_no.trim().is_empty() {
+                extract_phone_from_details(supplier_details)
             } else {
-                row.mobile_no.trim().to_string()
+                mobile_no.trim().to_string()
             };
 
             SupplierRecord {
@@ -276,6 +279,10 @@ fn suppliers_from_list_response(payload: SupplierListResponse) -> Vec<SupplierRe
             }
         })
         .collect()
+}
+
+fn opt_str(value: &Option<String>) -> &str {
+    value.as_deref().unwrap_or("")
 }
 
 fn extract_phone_from_details(details: &str) -> String {
@@ -303,13 +310,30 @@ mod tests {
         let suppliers = suppliers_from_list_response(SupplierListResponse {
             data: vec![SupplierListRow {
                 name: "SUP-001".to_string(),
-                supplier_name: String::new(),
-                mobile_no: String::new(),
-                supplier_details: "Telefon: +998901234567".to_string(),
+                supplier_name: None,
+                mobile_no: None,
+                supplier_details: Some("Telefon: +998901234567".to_string()),
             }],
         });
 
         assert_eq!(suppliers[0].id, "SUP-001");
+        assert_eq!(suppliers[0].name, "SUP-001");
+        assert_eq!(suppliers[0].phone, "+998901234567");
+    }
+
+    #[test]
+    fn accepts_null_optional_supplier_fields_like_erpnext() {
+        let payload: SupplierListResponse = serde_json::from_value(serde_json::json!({
+            "data": [{
+                "name": "SUP-001",
+                "supplier_name": null,
+                "mobile_no": "+998901234567",
+                "supplier_details": null
+            }]
+        }))
+        .expect("supplier response");
+
+        let suppliers = suppliers_from_list_response(payload);
         assert_eq!(suppliers[0].name, "SUP-001");
         assert_eq!(suppliers[0].phone, "+998901234567");
     }

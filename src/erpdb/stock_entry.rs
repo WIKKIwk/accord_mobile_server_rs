@@ -92,7 +92,7 @@ const STOCK_ENTRY_BARCODE_SQL: &str = r#"
         COALESCE(sed.idx, 0) AS line_index,
         COALESCE(sed.item_code, '') AS item_code,
         COALESCE(NULLIF(i.item_name, ''), sed.item_code, '') AS item_name,
-        COALESCE(sed.qty, 0) AS qty,
+        CAST(COALESCE(sed.qty, 0) AS DOUBLE) AS qty,
         COALESCE(NULLIF(sed.uom, ''), NULLIF(sed.stock_uom, ''), '') AS uom,
         COALESCE(NULLIF(sed.stock_uom, ''), NULLIF(sed.uom, ''), '') AS stock_uom,
         COALESCE(sed.barcode, '') AS barcode,

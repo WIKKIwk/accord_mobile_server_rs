@@ -253,7 +253,7 @@ const PURCHASE_RECEIPT_ROWS_SQL: &str = r#"
         COALESCE(pr.supplier_name, '') AS supplier_name,
         pr.docstatus AS doc_status,
         COALESCE(pr.status, '') AS status,
-        COALESCE(pr.total_qty, 0) AS total_qty,
+        CAST(COALESCE(pr.total_qty, 0) AS DOUBLE) AS total_qty,
         COALESCE(CAST(pr.posting_date AS CHAR), '') AS posting_date,
         COALESCE(pr.supplier_delivery_note, '') AS supplier_delivery_note,
         COALESCE(pr.remarks, '') AS remarks,
@@ -261,7 +261,7 @@ const PURCHASE_RECEIPT_ROWS_SQL: &str = r#"
         COALESCE(pri.item_code, '') AS item_code,
         COALESCE(pri.item_name, '') AS item_name,
         COALESCE(pri.uom, '') AS uom,
-        COALESCE(pri.amount, 0) AS amount
+        CAST(COALESCE(pri.amount, 0) AS DOUBLE) AS amount
     FROM `tabPurchase Receipt` pr
     LEFT JOIN `tabPurchase Receipt Item` pri ON pri.parent = pr.name AND pri.idx = 1
     WHERE pr.supplier_delivery_note LIKE 'TG:%'
@@ -275,8 +275,8 @@ const DELIVERY_NOTE_ROWS_SQL: &str = r#"
         COALESCE(dn.customer_name, '') AS customer_name,
         dn.docstatus AS doc_status,
         COALESCE(CAST(dn.modified AS CHAR), '') AS modified,
-        COALESCE(dn.total_qty, 0) AS qty,
-        COALESCE(dni.returned_qty, 0) AS returned_qty,
+        CAST(COALESCE(dn.total_qty, 0) AS DOUBLE) AS qty,
+        CAST(COALESCE(dni.returned_qty, 0) AS DOUBLE) AS returned_qty,
         COALESCE(dn.accord_customer_reason, '') AS customer_reason,
         COALESCE(dni.item_code, '') AS item_code,
         COALESCE(dni.item_name, '') AS item_name,
@@ -295,7 +295,7 @@ const PURCHASE_RECEIPT_ROWS_LIMIT_SQL: &str = r#"
         COALESCE(pr.supplier_name, '') AS supplier_name,
         pr.docstatus AS doc_status,
         COALESCE(pr.status, '') AS status,
-        COALESCE(pr.total_qty, 0) AS total_qty,
+        CAST(COALESCE(pr.total_qty, 0) AS DOUBLE) AS total_qty,
         COALESCE(CAST(pr.posting_date AS CHAR), '') AS posting_date,
         COALESCE(pr.supplier_delivery_note, '') AS supplier_delivery_note,
         COALESCE(pr.remarks, '') AS remarks,
@@ -303,7 +303,7 @@ const PURCHASE_RECEIPT_ROWS_LIMIT_SQL: &str = r#"
         COALESCE(pri.item_code, '') AS item_code,
         COALESCE(pri.item_name, '') AS item_name,
         COALESCE(pri.uom, '') AS uom,
-        COALESCE(pri.amount, 0) AS amount
+        CAST(COALESCE(pri.amount, 0) AS DOUBLE) AS amount
     FROM `tabPurchase Receipt` pr
     LEFT JOIN `tabPurchase Receipt Item` pri ON pri.parent = pr.name AND pri.idx = 1
     WHERE pr.supplier_delivery_note LIKE 'TG:%'
@@ -318,8 +318,8 @@ const DELIVERY_NOTE_ROWS_LIMIT_SQL: &str = r#"
         COALESCE(dn.customer_name, '') AS customer_name,
         dn.docstatus AS doc_status,
         COALESCE(CAST(dn.modified AS CHAR), '') AS modified,
-        COALESCE(dn.total_qty, 0) AS qty,
-        COALESCE(dni.returned_qty, 0) AS returned_qty,
+        CAST(COALESCE(dn.total_qty, 0) AS DOUBLE) AS qty,
+        CAST(COALESCE(dni.returned_qty, 0) AS DOUBLE) AS returned_qty,
         COALESCE(dn.accord_customer_reason, '') AS customer_reason,
         COALESCE(dni.item_code, '') AS item_code,
         COALESCE(dni.item_name, '') AS item_name,
@@ -336,7 +336,7 @@ const PURCHASE_RECEIPT_STATUS_ROWS_SQL: &str = r#"
     SELECT
         pr.docstatus AS doc_status,
         COALESCE(pr.status, '') AS status,
-        COALESCE(pr.total_qty, 0) AS total_qty,
+        CAST(COALESCE(pr.total_qty, 0) AS DOUBLE) AS total_qty,
         COALESCE(pr.supplier_delivery_note, '') AS supplier_delivery_note,
         COALESCE(pr.remarks, '') AS remarks
     FROM `tabPurchase Receipt` pr
@@ -357,7 +357,7 @@ const SUPPLIER_ACK_ROWS_LIMIT_SQL: &str = r#"
         COALESCE(CAST(c.creation AS CHAR), '') AS created_label,
         pr.supplier AS supplier_ref,
         COALESCE(pr.supplier_name, '') AS supplier_name,
-        COALESCE(pr.total_qty, 0) AS sent_qty,
+        CAST(COALESCE(pr.total_qty, 0) AS DOUBLE) AS sent_qty,
         COALESCE(pri.item_code, '') AS item_code,
         COALESCE(pri.item_name, '') AS item_name,
         COALESCE(pri.uom, '') AS uom
@@ -378,7 +378,7 @@ const PENDING_PURCHASE_RECEIPT_ROWS_SQL: &str = r#"
         COALESCE(pr.supplier_name, '') AS supplier_name,
         pr.docstatus AS doc_status,
         COALESCE(pr.status, '') AS status,
-        COALESCE(pr.total_qty, 0) AS total_qty,
+        CAST(COALESCE(pr.total_qty, 0) AS DOUBLE) AS total_qty,
         COALESCE(CAST(pr.posting_date AS CHAR), '') AS posting_date,
         COALESCE(pr.supplier_delivery_note, '') AS supplier_delivery_note,
         COALESCE(pr.remarks, '') AS remarks,
@@ -386,7 +386,7 @@ const PENDING_PURCHASE_RECEIPT_ROWS_SQL: &str = r#"
         COALESCE(pri.item_code, '') AS item_code,
         COALESCE(pri.item_name, '') AS item_name,
         COALESCE(pri.uom, '') AS uom,
-        COALESCE(pri.amount, 0) AS amount
+        CAST(COALESCE(pri.amount, 0) AS DOUBLE) AS amount
     FROM `tabPurchase Receipt` pr
     LEFT JOIN `tabPurchase Receipt Item` pri ON pri.parent = pr.name AND pri.idx = 1
     WHERE pr.supplier_delivery_note LIKE 'TG:%'
@@ -401,7 +401,7 @@ const PENDING_PURCHASE_RECEIPT_ROWS_LIMIT_SQL: &str = r#"
         COALESCE(pr.supplier_name, '') AS supplier_name,
         pr.docstatus AS doc_status,
         COALESCE(pr.status, '') AS status,
-        COALESCE(pr.total_qty, 0) AS total_qty,
+        CAST(COALESCE(pr.total_qty, 0) AS DOUBLE) AS total_qty,
         COALESCE(CAST(pr.posting_date AS CHAR), '') AS posting_date,
         COALESCE(pr.supplier_delivery_note, '') AS supplier_delivery_note,
         COALESCE(pr.remarks, '') AS remarks,
@@ -409,7 +409,7 @@ const PENDING_PURCHASE_RECEIPT_ROWS_LIMIT_SQL: &str = r#"
         COALESCE(pri.item_code, '') AS item_code,
         COALESCE(pri.item_name, '') AS item_name,
         COALESCE(pri.uom, '') AS uom,
-        COALESCE(pri.amount, 0) AS amount
+        CAST(COALESCE(pri.amount, 0) AS DOUBLE) AS amount
     FROM `tabPurchase Receipt` pr
     LEFT JOIN `tabPurchase Receipt Item` pri ON pri.parent = pr.name AND pri.idx = 1
     WHERE pr.supplier_delivery_note LIKE 'TG:%'
@@ -425,8 +425,8 @@ const PENDING_DELIVERY_NOTE_ROWS_SQL: &str = r#"
         COALESCE(dn.customer_name, '') AS customer_name,
         dn.docstatus AS doc_status,
         COALESCE(CAST(dn.modified AS CHAR), '') AS modified,
-        COALESCE(dn.total_qty, 0) AS qty,
-        COALESCE(dni.returned_qty, 0) AS returned_qty,
+        CAST(COALESCE(dn.total_qty, 0) AS DOUBLE) AS qty,
+        CAST(COALESCE(dni.returned_qty, 0) AS DOUBLE) AS returned_qty,
         COALESCE(dn.accord_customer_reason, '') AS customer_reason,
         COALESCE(dni.item_code, '') AS item_code,
         COALESCE(dni.item_name, '') AS item_name,
@@ -448,8 +448,8 @@ const PENDING_DELIVERY_NOTE_ROWS_LIMIT_SQL: &str = r#"
         COALESCE(dn.customer_name, '') AS customer_name,
         dn.docstatus AS doc_status,
         COALESCE(CAST(dn.modified AS CHAR), '') AS modified,
-        COALESCE(dn.total_qty, 0) AS qty,
-        COALESCE(dni.returned_qty, 0) AS returned_qty,
+        CAST(COALESCE(dn.total_qty, 0) AS DOUBLE) AS qty,
+        CAST(COALESCE(dni.returned_qty, 0) AS DOUBLE) AS returned_qty,
         COALESCE(dn.accord_customer_reason, '') AS customer_reason,
         COALESCE(dni.item_code, '') AS item_code,
         COALESCE(dni.item_name, '') AS item_name,

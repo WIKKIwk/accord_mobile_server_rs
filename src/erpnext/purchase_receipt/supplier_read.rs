@@ -43,7 +43,20 @@ impl SupplierPurchaseReceiptLookup for ErpnextClient {
         let payload: ListResponse<Value> = self
             .purchase_get_json("/api/resource/Purchase Receipt", &query)
             .await?;
-        payload.data.into_iter().map(map_purchase_receipt).collect()
+        let mut items = Vec::with_capacity(payload.data.len());
+        for row in payload.data {
+            match map_purchase_receipt(row.clone()) {
+                Ok(draft) => items.push(draft),
+                Err(error) => {
+                    let name = string_value(&row, "name");
+                    if name.is_empty() {
+                        return Err(error);
+                    }
+                    items.push(self.get_purchase_receipt(&name).await?);
+                }
+            }
+        }
+        Ok(items)
     }
 
     async fn list_supplier_purchase_receipt_comments_batch(
@@ -106,6 +119,15 @@ impl SupplierPurchaseReceiptLookup for ErpnextClient {
         }
         Ok(items_by_name)
     }
+}
+
+fn string_value(value: &Value, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string()
 }
 
 #[derive(Debug, Deserialize)]

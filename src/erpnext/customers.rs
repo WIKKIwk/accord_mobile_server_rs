@@ -74,10 +74,10 @@ pub async fn get_customer_profile(
         .map_err(|_| ProfilePortError::LookupFailed)?;
 
     Ok(CustomerProfileRecord {
-        phone: if payload.data.mobile_no.trim().is_empty() {
-            extract_phone_from_details(&payload.data.customer_details)
+        phone: if opt_str(&payload.data.mobile_no).trim().is_empty() {
+            extract_phone_from_details(opt_str(&payload.data.customer_details))
         } else {
-            payload.data.mobile_no.trim().to_string()
+            opt_str(&payload.data.mobile_no).trim().to_string()
         },
     })
 }
@@ -99,11 +99,11 @@ struct CustomerListResponse {
 struct CustomerListRow {
     name: String,
     #[serde(default)]
-    customer_name: String,
+    customer_name: Option<String>,
     #[serde(default)]
-    mobile_no: String,
+    mobile_no: Option<String>,
     #[serde(default)]
-    customer_details: String,
+    customer_details: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,9 +114,9 @@ struct CustomerGetResponse {
 #[derive(Debug, Deserialize)]
 struct CustomerGetRow {
     #[serde(default)]
-    mobile_no: String,
+    mobile_no: Option<String>,
     #[serde(default)]
-    customer_details: String,
+    customer_details: Option<String>,
 }
 
 fn customers_from_list_response(payload: CustomerListResponse) -> Vec<CustomerRecord> {
@@ -124,15 +124,18 @@ fn customers_from_list_response(payload: CustomerListResponse) -> Vec<CustomerRe
         .data
         .into_iter()
         .map(|row| {
-            let name = if row.customer_name.trim().is_empty() {
+            let customer_name = opt_str(&row.customer_name);
+            let mobile_no = opt_str(&row.mobile_no);
+            let customer_details = opt_str(&row.customer_details);
+            let name = if customer_name.trim().is_empty() {
                 row.name.trim().to_string()
             } else {
-                row.customer_name.trim().to_string()
+                customer_name.trim().to_string()
             };
-            let phone = if row.mobile_no.trim().is_empty() {
-                extract_phone_from_details(&row.customer_details)
+            let phone = if mobile_no.trim().is_empty() {
+                extract_phone_from_details(customer_details)
             } else {
-                row.mobile_no.trim().to_string()
+                mobile_no.trim().to_string()
             };
 
             CustomerRecord {
@@ -142,6 +145,10 @@ fn customers_from_list_response(payload: CustomerListResponse) -> Vec<CustomerRe
             }
         })
         .collect()
+}
+
+fn opt_str(value: &Option<String>) -> &str {
+    value.as_deref().unwrap_or("")
 }
 
 fn extract_phone_from_details(details: &str) -> String {
@@ -168,13 +175,30 @@ mod tests {
         let customers = customers_from_list_response(CustomerListResponse {
             data: vec![CustomerListRow {
                 name: "CUST-001".to_string(),
-                customer_name: String::new(),
-                mobile_no: String::new(),
-                customer_details: "Phone: +998901234567".to_string(),
+                customer_name: None,
+                mobile_no: None,
+                customer_details: Some("Phone: +998901234567".to_string()),
             }],
         });
 
         assert_eq!(customers[0].id, "CUST-001");
+        assert_eq!(customers[0].name, "CUST-001");
+        assert_eq!(customers[0].phone, "+998901234567");
+    }
+
+    #[test]
+    fn accepts_null_optional_customer_fields_like_erpnext() {
+        let payload: CustomerListResponse = serde_json::from_value(serde_json::json!({
+            "data": [{
+                "name": "CUST-001",
+                "customer_name": null,
+                "mobile_no": "+998901234567",
+                "customer_details": null
+            }]
+        }))
+        .expect("customer response");
+
+        let customers = customers_from_list_response(payload);
         assert_eq!(customers[0].name, "CUST-001");
         assert_eq!(customers[0].phone, "+998901234567");
     }
