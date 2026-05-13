@@ -7,6 +7,9 @@ ERPNext workflows. It serves the existing mobile app directly and preserves the
 Go mobile API contract: routes, auth order, status codes, JSON shapes, ERPNext
 side effects, push behavior, and runtime settings.
 
+This is the primary Accord mobile backend. The mobile app is expected to talk
+to this service directly in production.
+
 ## Why it matters
 
 The service can replace the previous mobile backend without a client-side app
@@ -50,8 +53,8 @@ The service exists to provide the mobile API for the operational flow around:
   image search flows;
 - customer dashboard, delivery note detail, and delivery response flows;
 - profile, avatar upload, avatar proxy, session, and mobile identity flows;
-- admin settings, supplier/customer/item management, code regeneration, and
-  operational activity flows;
+- admin settings, supplier/customer/item management, item group tree
+  management, code regeneration, and operational activity flows;
 - notification comments/details and role-targeted push notifications.
 
 The implementation is organized as a layered service rather than a monolithic
@@ -222,8 +225,31 @@ The REST client uses API key/secret credentials and a configurable timeout.
 `ERP_DIRECT_READ_ENABLED=1` is set. Direct reads are used for read-heavy mobile
 models and lookup/search flows while mutations continue through ERPNext REST.
 
+This boundary is intentional:
+
+- reads may use MariaDB projections for speed and deterministic mobile shapes;
+- writes continue through ERPNext REST so permissions, validations, document
+  hooks, nested-set updates, and side effects remain owned by ERPNext.
+
 Direct DB configuration can be loaded from Frappe `site_config.json` and then
 overridden by explicit environment variables.
+
+### Admin item group tree management
+
+Admin item group workflows use ERPNext `Item Group` as the source of truth.
+The mobile API supports:
+
+- item group search for parent pickers;
+- item group creation with parent and `is_group`;
+- moving an existing group under a new parent;
+- bulk moving items into an item group.
+
+ERPNext represents item groups as a nested set. The service preserves that
+model by writing through ERPNext REST and by keeping the `is_group` invariant
+valid for mobile-created trees. When a child group is created under a parent,
+the parent is promoted to a group if needed. When a legacy or manually-created
+node already has children but is still marked as a leaf, the move flow promotes
+it before asking ERPNext to save the new parent.
 
 ### Local JSON state
 
@@ -372,7 +398,7 @@ them under the same paths expected by the mobile app.
 | `/v1/mobile/admin/customers/items/add` | Assign one customer item. |
 | `/v1/mobile/admin/customers/items/remove` | Unassign one customer item. |
 | `/v1/mobile/admin/customers/remove` | Soft-remove customer. |
-| `/v1/mobile/admin/item-groups` | Item group search. |
+| `/v1/mobile/admin/item-groups` | Item group search, create, and parent move. |
 | `/v1/mobile/admin/items` | Item list and item create. |
 | `/v1/mobile/admin/items/bulk-move-group` | Move multiple items to an item group. |
 | `/v1/mobile/admin/activity` | Admin activity feed. |
