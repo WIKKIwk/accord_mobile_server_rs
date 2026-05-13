@@ -107,7 +107,8 @@ impl AppState {
                     .with_lookup(direct_reader.clone())
                     .with_customer_issue_source_lookup(direct_reader.clone())
                     .with_notification_detail_lookup(direct_reader.clone())
-                    .with_supplier_read_lookup(direct_reader);
+                    .with_supplier_read_lookup(direct_reader.clone());
+                profiles = profiles.with_read_lookup(direct_reader.clone());
             }
             Ok(None) => {}
             Err(error) => {

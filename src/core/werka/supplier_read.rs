@@ -61,6 +61,12 @@ impl WerkaService {
         supplier_display_name: &str,
         kind: &str,
     ) -> Result<Option<Vec<SupplierStatusBreakdownEntry>>, WerkaPortError> {
+        if let Some(lookup) = &self.supplier_read_lookup {
+            return lookup
+                .supplier_status_breakdown(supplier_ref, kind)
+                .await
+                .map(Some);
+        }
         let Some(lookup) = &self.supplier_purchase_receipt_lookup else {
             return Ok(None);
         };
@@ -80,6 +86,12 @@ impl WerkaService {
         kind: &str,
         item_code: &str,
     ) -> Result<Option<Vec<DispatchRecord>>, WerkaPortError> {
+        if let Some(lookup) = &self.supplier_read_lookup {
+            return lookup
+                .supplier_status_details(supplier_ref, kind, item_code)
+                .await
+                .map(Some);
+        }
         let Some(lookup) = &self.supplier_purchase_receipt_lookup else {
             return Ok(None);
         };

@@ -4,8 +4,8 @@ use time::Date;
 use crate::core::werka::models::{
     CustomerDirectoryEntry, CustomerItemOption, DispatchRecord, NotificationDetail,
     StockEntryBarcodeEntry, SupplierDirectoryEntry, SupplierHomeSummary, SupplierItem,
-    WerkaAiSearchSuggestion, WerkaArchiveResponse, WerkaCustomerIssueRecord, WerkaHomeData,
-    WerkaHomeSummary, WerkaStatusBreakdownEntry,
+    SupplierStatusBreakdownEntry, WerkaAiSearchSuggestion, WerkaArchiveResponse,
+    WerkaCustomerIssueRecord, WerkaHomeData, WerkaHomeSummary, WerkaStatusBreakdownEntry,
 };
 
 #[async_trait]
@@ -94,7 +94,6 @@ pub trait WerkaHomeLookup: Send + Sync {
         Err(WerkaPortError::DirectDbLookupUnavailable)
     }
 }
-
 #[async_trait]
 pub trait SupplierReadLookup: Send + Sync {
     async fn supplier_summary(
@@ -105,8 +104,18 @@ pub trait SupplierReadLookup: Send + Sync {
         &self,
         supplier_ref: &str,
     ) -> Result<Vec<DispatchRecord>, WerkaPortError>;
+    async fn supplier_status_breakdown(
+        &self,
+        supplier_ref: &str,
+        kind: &str,
+    ) -> Result<Vec<SupplierStatusBreakdownEntry>, WerkaPortError>;
+    async fn supplier_status_details(
+        &self,
+        supplier_ref: &str,
+        kind: &str,
+        item_code: &str,
+    ) -> Result<Vec<DispatchRecord>, WerkaPortError>;
 }
-
 #[async_trait]
 pub trait SupplierPurchaseReceiptLookup: Send + Sync {
     async fn list_supplier_purchase_receipts_page(

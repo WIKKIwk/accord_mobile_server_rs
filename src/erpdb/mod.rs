@@ -2,6 +2,7 @@ mod admin;
 mod credentials;
 mod customer_issue;
 mod notification_detail;
+mod profile;
 pub mod reader;
 mod stock_entry;
 mod supplier_read;

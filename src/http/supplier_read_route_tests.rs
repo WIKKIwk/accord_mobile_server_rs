@@ -11,7 +11,9 @@ use crate::app::AppState;
 use crate::config::AppConfig;
 use crate::core::auth::models::{Principal, PrincipalRole};
 use crate::core::session::manager::SessionManager;
-use crate::core::werka::models::{DispatchRecord, SupplierHomeSummary};
+use crate::core::werka::models::{
+    DispatchRecord, SupplierHomeSummary, SupplierStatusBreakdownEntry,
+};
 use crate::core::werka::ports::{
     PurchaseReceiptComment, PurchaseReceiptDraft, SupplierPurchaseReceiptLookup,
     SupplierReadLookup, WerkaPortError,
@@ -413,6 +415,49 @@ impl SupplierReadLookup for FakeSupplierRead {
             sent_qty: 5.0,
             accepted_qty: 3.0,
             status: "partial".to_string(),
+            created_label: "2026-01-26".to_string(),
+            ..DispatchRecord::default()
+        }])
+    }
+
+    async fn supplier_status_breakdown(
+        &self,
+        supplier_ref: &str,
+        kind: &str,
+    ) -> Result<Vec<SupplierStatusBreakdownEntry>, WerkaPortError> {
+        assert_eq!(supplier_ref, "SUP-001");
+        assert_eq!(kind, "submitted");
+        Ok(vec![SupplierStatusBreakdownEntry {
+            item_code: "ITEM-001".to_string(),
+            item_name: "Item".to_string(),
+            receipt_count: 2,
+            total_sent_qty: 5.0,
+            total_accepted_qty: 5.0,
+            total_returned_qty: 0.0,
+            uom: "Nos".to_string(),
+        }])
+    }
+
+    async fn supplier_status_details(
+        &self,
+        supplier_ref: &str,
+        kind: &str,
+        item_code: &str,
+    ) -> Result<Vec<DispatchRecord>, WerkaPortError> {
+        assert_eq!(supplier_ref, "SUP-001");
+        assert_eq!(kind, "submitted");
+        assert_eq!(item_code, "item-001");
+        Ok(vec![DispatchRecord {
+            id: "PR-DB-001".to_string(),
+            record_type: "purchase_receipt".to_string(),
+            supplier_ref: "SUP-001".to_string(),
+            supplier_name: "Supplier".to_string(),
+            item_code: "ITEM-001".to_string(),
+            item_name: "Item".to_string(),
+            uom: "Nos".to_string(),
+            sent_qty: 5.0,
+            accepted_qty: 5.0,
+            status: "accepted".to_string(),
             created_label: "2026-01-26".to_string(),
             ..DispatchRecord::default()
         }])
