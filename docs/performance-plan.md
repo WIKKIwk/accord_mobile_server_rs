@@ -31,6 +31,56 @@ Examples:
 This keeps business compatibility easy to reason about, but it means the service
 can fetch more rows than the mobile response needs.
 
+## Restored ERPNext DB Snapshot
+
+The local `erpfresh.localhost` bench has been restored from the production
+backup and migrated to the updated local Frappe/ERPNext code.
+
+Current restored table counts:
+
+| Table | Rows |
+| --- | ---: |
+| `tabItem` | 2807 |
+| `tabItem Customer Detail` | 5538 |
+| `tabCustomer` | 442 |
+| `tabSupplier` | 49 |
+| `tabDelivery Note` | 74 |
+| `tabDelivery Note Item` | 74 |
+| `tabPurchase Receipt` | 2 |
+| `tabPurchase Receipt Item` | 2 |
+| `tabBin` | 2769 |
+| `tabStock Ledger Entry` | 2964 |
+
+Largest business tables by size are currently stock/item related:
+
+- `tabStock Ledger Entry`
+- `tabStock Entry Detail`
+- `tabItem`
+- `tabItem Customer Detail`
+- `tabBin`
+
+Index observations:
+
+- child-table joins already have `parent` indexes on delivery-note and
+  purchase-receipt item tables;
+- `tabBin` has a unique `(item_code, warehouse)` index, which is good for stock
+  lookups;
+- `tabItem Customer Detail` has indexes on `customer_name`, `ref_code`, and
+  `parent`;
+- `tabPurchase Receipt.supplier_delivery_note` is not indexed, but this dump has
+  only two purchase receipts, so it is not a current bottleneck;
+- `tabDelivery Note` has indexes on `customer`, `posting_date`, `status`, and
+  `modified`, but not on the Accord custom state fields.
+
+Immediate DB conclusion:
+
+- this restored DB is good enough for functional and local latency tests;
+- the biggest current read pressure is not search;
+- for Werka dashboard paths, the main waste is still fetching rows into Rust and
+  then counting/filtering/grouping there;
+- for item/customer/stock picker paths, index review and optional cache are more
+  relevant than SQL pushdown.
+
 ## Search Decision
 
 Search is intentionally out of scope for this performance pass.
@@ -221,3 +271,20 @@ Expected result:
 5. Index review.
 6. Optional read cache.
 7. Mobile read-model table.
+
+## DB-Informed Execution Order
+
+After inspecting the restored ERPNext DB, the practical execution order should
+be:
+
+1. Add DB pool auto tuning first, because it is low-risk and affects every
+   direct DB path.
+2. Add bounded parallel MariaDB reads for independent receipt/delivery queries.
+3. Add SQL pushdown for Werka `summary`, `status_breakdown`, `status_details`,
+   and `pending`, with tests comparing output against the current Rust builders.
+4. Review and add only proven indexes after running `EXPLAIN` on the exact
+   query shapes.
+5. Add LMDB session store for login-heavy benchmarks.
+6. Add short TTL read cache only for stable picker/list endpoints.
+7. Consider a mobile read-model table only after the smaller optimizations are
+   measured.
