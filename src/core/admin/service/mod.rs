@@ -66,7 +66,7 @@ impl AdminService {
                     .map(|value| value.trim().to_string())
                     .filter(|value| !value.is_empty())
                     .unwrap_or_else(|| "Kg".to_string()),
-                werka_phone: "+99888862440".to_string(),
+                werka_phone: config.werka_phone.clone(),
                 werka_name: config.werka_name.clone(),
                 werka_code: config.werka_code.clone(),
                 admin_phone: config.admin_phone.clone(),
@@ -207,6 +207,7 @@ impl AdminService {
             &config.default_target_warehouse,
         );
         self.update_auth_runtime(
+            &config.werka_phone,
             &config.werka_code,
             &config.werka_name,
             &config.admin_phone,
@@ -253,13 +254,14 @@ impl AdminService {
 
     fn update_auth_runtime(
         &self,
+        werka_phone: &str,
         werka_code: &str,
         werka_name: &str,
         admin_phone: &str,
         admin_name: &str,
     ) {
         if let Some(sink) = &self.auth_config_sink {
-            sink.set_runtime_identity(werka_code, werka_name, admin_phone, admin_name);
+            sink.set_runtime_identity(werka_phone, werka_code, werka_name, admin_phone, admin_name);
         }
     }
 

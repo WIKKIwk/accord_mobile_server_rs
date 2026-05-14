@@ -49,6 +49,7 @@ pub trait AdminAccessStateLookup: Send + Sync {
 pub trait AuthConfigSink: Send + Sync {
     fn set_runtime_identity(
         &self,
+        werka_phone: &str,
         werka_code: &str,
         werka_name: &str,
         admin_phone: &str,

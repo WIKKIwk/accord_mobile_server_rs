@@ -22,6 +22,7 @@ pub struct AuthService {
 
 #[derive(Debug, Clone)]
 struct AuthIdentity {
+    werka_phone: String,
     werka_code: String,
     werka_name: String,
     admin_phone: String,
@@ -44,6 +45,8 @@ impl AuthService {
             supplier_prefix: blank_default(&config.supplier_prefix, "10"),
             werka_prefix: blank_default(&config.werka_prefix, "20"),
             identity: Arc::new(RwLock::new(AuthIdentity {
+                werka_phone: normalize_config_phone(&config.werka_phone)
+                    .unwrap_or_else(|_| config.werka_phone.trim().to_string()),
                 werka_code: config.werka_code.trim().to_string(),
                 werka_name: blank_default(&config.werka_name, "Werka"),
                 admin_phone: normalize_config_phone(&config.admin_phone)
@@ -218,7 +221,11 @@ impl AuthService {
         code: &str,
         identity: &AuthIdentity,
     ) -> Result<Principal, AuthError> {
-        if !code.is_empty() && code == identity.werka_code {
+        if !identity.werka_phone.is_empty()
+            && identity.werka_phone.eq_ignore_ascii_case(&normalized_phone)
+            && !code.is_empty()
+            && code == identity.werka_code
+        {
             return Ok(Principal {
                 role: PrincipalRole::Werka,
                 display_name: identity.werka_name.clone(),
@@ -250,14 +257,18 @@ impl AuthService {
 impl AuthConfigSink for AuthService {
     fn set_runtime_identity(
         &self,
+        werka_phone: &str,
         werka_code: &str,
         werka_name: &str,
         admin_phone: &str,
         admin_name: &str,
     ) {
+        let normalized_werka_phone =
+            normalize_config_phone(werka_phone).unwrap_or_else(|_| werka_phone.trim().to_string());
         let normalized_admin_phone =
             normalize_config_phone(admin_phone).unwrap_or_else(|_| admin_phone.trim().to_string());
         let identity = AuthIdentity {
+            werka_phone: normalized_werka_phone,
             werka_code: werka_code.trim().to_string(),
             werka_name: blank_default(werka_name, "Werka"),
             admin_phone: normalized_admin_phone,

@@ -28,6 +28,7 @@ fn config() -> AppConfig {
         werka_prefix: "20".to_string(),
         werka_code: "20ABCDEF1234".to_string(),
         werka_name: "Werka".to_string(),
+        werka_phone: "+99888862440".to_string(),
         admin_phone: "+998880000000".to_string(),
         admin_name: "Admin".to_string(),
         admin_code: "19621978".to_string(),
@@ -61,15 +62,16 @@ async fn admin_login_does_not_need_erp() {
 }
 
 #[tokio::test]
-async fn werka_login_is_code_driven() {
+async fn werka_login_requires_configured_phone() {
     let auth = AuthService::new(&config());
     let principal = auth
-        .login("+123456789", "20ABCDEF1234")
+        .login("+99888862440", "20ABCDEF1234")
         .await
         .expect("werka login");
 
     assert_eq!(principal.role, PrincipalRole::Werka);
     assert_eq!(principal.ref_, "werka");
+    assert!(auth.login("+998880000000", "20ABCDEF1234").await.is_err());
 }
 
 #[tokio::test]

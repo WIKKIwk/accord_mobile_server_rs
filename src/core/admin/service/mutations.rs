@@ -370,6 +370,7 @@ impl AdminService {
         self.config.write().await.werka_code = code;
         let config = self.config.read().await;
         self.update_auth_runtime(
+            &config.werka_phone,
             &config.werka_code,
             &config.werka_name,
             &config.admin_phone,

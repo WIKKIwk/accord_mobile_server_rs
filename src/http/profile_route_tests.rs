@@ -33,6 +33,7 @@ fn test_state() -> AppState {
         werka_prefix: "20".to_string(),
         werka_code: "20ABCDEF1234".to_string(),
         werka_name: "Werka".to_string(),
+        werka_phone: "+99888862440".to_string(),
         admin_phone: "+998880000000".to_string(),
         admin_name: "Admin".to_string(),
         admin_code: "19621978".to_string(),
