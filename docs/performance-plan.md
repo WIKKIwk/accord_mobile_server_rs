@@ -81,6 +81,56 @@ Immediate DB conclusion:
 - for item/customer/stock picker paths, index review and optional cache are more
   relevant than SQL pushdown.
 
+## ERP-Side Custom Field Contract
+
+The direct DB read paths must account for the ERP-side custom field app:
+
+- upstream repository: `accord-erp-automation/accord_erp_custom_field`;
+- local installed app name in the restored bench: `accord_state_core`;
+- both currently manage the same `Delivery Note` workflow fields.
+
+Managed fields:
+
+- `accord_flow_state`
+- `accord_customer_state`
+- `accord_customer_reason`
+- `accord_delivery_actor`
+- `accord_status_section`
+- `accord_ui_status`
+
+The restored DB also has `accord_source_key`, which is used by the wider Accord
+workflow but is not part of the minimal state app contract shown above.
+
+Current restored DB field distribution:
+
+| Field state | Rows |
+| --- | ---: |
+| total `Delivery Note` rows | 74 |
+| submitted rows | 72 |
+| `accord_flow_state = 1` | 73 |
+| `accord_customer_state = 1` | 73 |
+| `accord_ui_status = 'pending'` | 72 |
+
+Important correction:
+
+- these custom fields are intentionally the business state source for mobile
+  delivery workflow reads;
+- Rust should not infer delivery state from comments or partial row samples when
+  these fields are available;
+- using these fields is not a Rust-side workaround, it is the intended ERP-side
+  schema contract;
+- however, the custom field app creates fields, not MariaDB indexes.
+
+Optimization implication:
+
+- SQL pushdown should use `accord_flow_state`, `accord_customer_state`, and when
+  safe `accord_ui_status`;
+- no correctness-critical endpoint may sample a subset of ERP rows and infer a
+  global result;
+- `LIMIT` is valid only after the full correct filter/order logic is applied for
+  a paged/list response;
+- summary/count/breakdown paths must scan or aggregate the full matching set.
+
 ## Search Decision
 
 Search is intentionally out of scope for this performance pass.
