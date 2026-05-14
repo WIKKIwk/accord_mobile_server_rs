@@ -445,7 +445,7 @@ const WERKA_SUMMARY_PUSHDOWN_SQL: &str = r#"
             END AS status
         FROM `tabDelivery Note` dn
         WHERE dn.docstatus = 1
-          AND COALESCE(dn.accord_flow_state, 0) = 1
+          AND dn.accord_flow_state = 1
     ) statuses
 "#;
 
@@ -623,8 +623,8 @@ const WERKA_STATUS_DETAILS_CONFIRMED_SQL: &str = r#"
         FROM `tabDelivery Note` dn
         LEFT JOIN `tabDelivery Note Item` dni ON dni.parent = dn.name AND dni.idx = 1
         WHERE dn.docstatus = 1
-          AND COALESCE(dn.accord_flow_state, 0) = 1
-          AND COALESCE(dn.accord_customer_state, 0) = 3
+          AND dn.accord_flow_state = 1
+          AND dn.accord_customer_state = 3
     ) records
     WHERE (? = '' OR LOWER(TRIM(supplier_ref)) = LOWER(TRIM(?)))
     ORDER BY created_label DESC
@@ -727,8 +727,8 @@ const WERKA_STATUS_DETAILS_RETURNED_SQL: &str = r#"
         FROM `tabDelivery Note` dn
         LEFT JOIN `tabDelivery Note Item` dni ON dni.parent = dn.name AND dni.idx = 1
         WHERE dn.docstatus = 1
-          AND COALESCE(dn.accord_flow_state, 0) = 1
-          AND COALESCE(dn.accord_customer_state, 0) IN (2, 4)
+          AND dn.accord_flow_state = 1
+          AND dn.accord_customer_state IN (2, 4)
     )
     records
     WHERE (? = '' OR LOWER(TRIM(supplier_ref)) = LOWER(TRIM(?)))
@@ -806,8 +806,8 @@ const WERKA_PENDING_PUSHDOWN_SQL: &str = r#"
         FROM `tabDelivery Note` dn
         LEFT JOIN `tabDelivery Note Item` dni ON dni.parent = dn.name AND dni.idx = 1
         WHERE dn.docstatus = 1
-          AND COALESCE(dn.accord_flow_state, 0) = 1
-          AND COALESCE(dn.accord_customer_state, 0) NOT IN (2, 3, 4)
+          AND dn.accord_flow_state = 1
+          AND dn.accord_customer_state NOT IN (2, 3, 4)
     ) pending_rows
     ORDER BY created_label DESC
 "#;
@@ -863,8 +863,8 @@ const WERKA_PENDING_PUSHDOWN_LIMIT_SQL: &str = r#"
         FROM `tabDelivery Note` dn
         LEFT JOIN `tabDelivery Note Item` dni ON dni.parent = dn.name AND dni.idx = 1
         WHERE dn.docstatus = 1
-          AND COALESCE(dn.accord_flow_state, 0) = 1
-          AND COALESCE(dn.accord_customer_state, 0) NOT IN (2, 3, 4)
+          AND dn.accord_flow_state = 1
+          AND dn.accord_customer_state NOT IN (2, 3, 4)
     ) pending_rows
     ORDER BY created_label DESC
     LIMIT ?

@@ -245,6 +245,10 @@ This boundary is intentional:
 Direct DB configuration can be loaded from Frappe `site_config.json` and then
 overridden by explicit environment variables.
 
+For production MariaDB performance, review and apply the proven index runbook in
+`docs/performance-indexes.sql` during a maintenance window, then benchmark the
+read paths again.
+
 ### Admin item group tree management
 
 Admin item group workflows use ERPNext `Item Group` as the source of truth.

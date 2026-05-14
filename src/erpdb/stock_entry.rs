@@ -101,7 +101,7 @@ const STOCK_ENTRY_BARCODE_SQL: &str = r#"
     FROM `tabStock Entry Detail` sed
     INNER JOIN `tabStock Entry` se ON se.name = sed.parent
     LEFT JOIN tabItem i ON i.name = sed.item_code
-    WHERE COALESCE(sed.barcode, '') = ?
+    WHERE sed.barcode = ?
     ORDER BY se.modified DESC, se.creation DESC, se.name DESC, sed.idx ASC
     LIMIT ?
 "#;
