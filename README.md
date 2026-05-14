@@ -30,6 +30,17 @@ Configure real `.env` values before production use. At minimum set `ERP_URL`,
 `ERP_API_KEY`, `ERP_API_SECRET`, and the store paths. Enable
 `ERP_DIRECT_READ_ENABLED=1` only when ERPNext database access is configured.
 
+## Performance Validation
+
+On 2026-05-14, this Rust service was benchmarked side-by-side against the legacy
+Go service on the same `fedora` server, using copied runtime state and read-only
+mobile endpoints. All smoke/load checks returned `200` with zero ApacheBench
+failures. Rust showed lower latency on most tested read-heavy routes, especially
+admin item and item group reads.
+
+Full benchmark notes are available in
+[docs/benchmarks/2026-05-14-go-vs-rust.md](docs/benchmarks/2026-05-14-go-vs-rust.md).
+
 `accord_mobile_server_rs` is an independent Rust service for the Accord mobile
 backend. It is a standalone Axum/Tokio application that speaks directly to the
 mobile clients, ERPNext, the ERPNext MariaDB database when direct reads are
