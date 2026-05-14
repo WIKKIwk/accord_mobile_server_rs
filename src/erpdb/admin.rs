@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use sqlx::{MySql, QueryBuilder, query_as};
 
-use crate::core::admin::models::AdminDirectoryEntry;
+use crate::core::admin::models::{AdminDirectoryEntry, AdminItemGroup};
 use crate::core::admin::ports::{AdminPortError, AdminReadPort};
 use crate::core::werka::models::SupplierItem;
 use crate::erpdb::reader::DirectDbReader;
@@ -156,6 +156,18 @@ impl AdminReadPort for DirectDbReader {
             .collect())
     }
 
+    async fn item_group_tree(&self) -> Result<Vec<AdminItemGroup>, AdminPortError> {
+        let rows = query_as::<_, AdminItemGroupRow>(ADMIN_ITEM_GROUP_TREE_SQL)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_lookup_error)?;
+        Ok(rows
+            .into_iter()
+            .map(AdminItemGroupRow::into_group)
+            .filter(|group| !group.name.is_empty())
+            .collect())
+    }
+
     async fn assigned_supplier_items(
         &self,
         supplier_ref: &str,
@@ -237,10 +249,33 @@ impl AdminItemRow {
 #[derive(Debug, sqlx::FromRow)]
 struct AdminItemGroupRow {
     name: String,
+    item_group_name: String,
+    parent_item_group: String,
+    is_group: i32,
+}
+
+impl AdminItemGroupRow {
+    fn into_group(self) -> AdminItemGroup {
+        AdminItemGroup {
+            name: self.name.trim().to_string(),
+            item_group_name: blank_default(&self.item_group_name, &self.name),
+            parent_item_group: self.parent_item_group.trim().to_string(),
+            is_group: self.is_group != 0,
+        }
+    }
 }
 
 fn map_lookup_error(_error: sqlx::Error) -> AdminPortError {
     AdminPortError::LookupFailed
+}
+
+fn blank_default(value: &str, fallback: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        fallback.trim().to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 fn map_not_found_error(error: sqlx::Error) -> AdminPortError {
@@ -311,11 +346,25 @@ const ADMIN_ITEMS_PAGE_SQL: &str = r#"
 "#;
 
 const ADMIN_ITEM_GROUPS_SQL: &str = r#"
-    SELECT name
+    SELECT
+        name,
+        COALESCE(NULLIF(item_group_name, ''), name) AS item_group_name,
+        COALESCE(parent_item_group, '') AS parent_item_group,
+        COALESCE(is_group, 0) AS is_group
     FROM `tabItem Group`
     WHERE ? = '' OR name LIKE ? ESCAPE '\\' OR item_group_name LIKE ? ESCAPE '\\'
     ORDER BY name ASC
     LIMIT ?
+"#;
+
+const ADMIN_ITEM_GROUP_TREE_SQL: &str = r#"
+    SELECT
+        name,
+        COALESCE(NULLIF(item_group_name, ''), name) AS item_group_name,
+        COALESCE(parent_item_group, '') AS parent_item_group,
+        COALESCE(is_group, 0) AS is_group
+    FROM `tabItem Group`
+    ORDER BY lft ASC, name ASC
 "#;
 
 const ADMIN_ASSIGNED_SUPPLIER_ITEMS_SQL: &str = r#"

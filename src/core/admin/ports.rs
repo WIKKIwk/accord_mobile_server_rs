@@ -40,6 +40,25 @@ pub trait AdminReadPort: Send + Sync {
 
     async fn item_groups(&self, query: &str, limit: usize) -> Result<Vec<String>, AdminPortError>;
 
+    async fn item_group_tree(&self) -> Result<Vec<AdminItemGroup>, AdminPortError> {
+        let groups = self.item_groups("", 500).await?;
+        Ok(groups
+            .into_iter()
+            .filter_map(|name| {
+                let name = name.trim();
+                if name.is_empty() {
+                    return None;
+                }
+                Some(AdminItemGroup {
+                    name: name.to_string(),
+                    item_group_name: name.to_string(),
+                    parent_item_group: String::new(),
+                    is_group: true,
+                })
+            })
+            .collect())
+    }
+
     async fn assigned_supplier_items(
         &self,
         supplier_ref: &str,

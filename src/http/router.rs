@@ -183,6 +183,10 @@ pub fn build_router(state: AppState) -> Router {
             "/v1/mobile/admin/items/bulk-move-group",
             any(admin::items_bulk_move_group),
         )
+        .route(
+            "/v1/mobile/admin/item-groups/tree",
+            any(admin::item_group_tree),
+        )
         .route("/v1/mobile/admin/item-groups", any(admin::item_groups))
         .route("/v1/mobile/admin/activity", any(admin::activity))
         .route(

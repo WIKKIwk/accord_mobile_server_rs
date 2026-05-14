@@ -1,6 +1,8 @@
 use super::helpers::*;
 use super::*;
 
+use crate::core::admin::models::AdminItemGroup;
+
 impl AdminService {
     pub async fn suppliers_page(
         &self,
@@ -182,6 +184,20 @@ impl AdminService {
             Ok(vec!["All Item Groups".to_string()])
         } else {
             Ok(dedupe_strings(groups))
+        }
+    }
+
+    pub async fn item_group_tree(&self) -> Result<Vec<AdminItemGroup>, AdminPortError> {
+        let groups = self.read_port()?.item_group_tree().await?;
+        if groups.is_empty() {
+            Ok(vec![AdminItemGroup {
+                name: "All Item Groups".to_string(),
+                item_group_name: "All Item Groups".to_string(),
+                parent_item_group: String::new(),
+                is_group: true,
+            }])
+        } else {
+            Ok(groups)
         }
     }
 

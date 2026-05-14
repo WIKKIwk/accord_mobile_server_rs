@@ -148,6 +148,23 @@ pub async fn item_groups(
         .map_err(|_| server_error("admin item groups failed"))
 }
 
+pub async fn item_group_tree(
+    State(state): State<AppState>,
+    method: Method,
+    headers: HeaderMap,
+) -> Result<Response, AdminError> {
+    authorize_admin(&state, &headers).await?;
+    if method != Method::GET {
+        return Err(method_not_allowed());
+    }
+    state
+        .admin
+        .item_group_tree()
+        .await
+        .map(json_response)
+        .map_err(|_| server_error("admin item group tree failed"))
+}
+
 pub async fn activity(
     State(state): State<AppState>,
     method: Method,

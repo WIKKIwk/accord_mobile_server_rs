@@ -5,7 +5,7 @@ mod system;
 
 pub use customers::{
     activity, customer_code_regenerate, customer_detail, customer_item_add, customer_item_remove,
-    customer_list, customer_phone, customer_remove, customers, item_groups, items,
+    customer_list, customer_phone, customer_remove, customers, item_group_tree, item_groups, items,
 };
 pub use supplier_mutations::{
     supplier_code_regenerate, supplier_item_add, supplier_item_remove, supplier_items,

@@ -66,6 +66,7 @@ async fn admin_method_checks_happen_after_auth_like_go() {
         ("PATCH", "/v1/mobile/admin/items"),
         ("GET", "/v1/mobile/admin/items/bulk-move-group"),
         ("PATCH", "/v1/mobile/admin/item-groups"),
+        ("POST", "/v1/mobile/admin/item-groups/tree"),
         ("POST", "/v1/mobile/admin/activity"),
         ("GET", "/v1/mobile/admin/werka/code/regenerate"),
     ];
@@ -372,6 +373,25 @@ async fn admin_customers_and_items_read_like_go() {
         .expect("response");
     assert_eq!(groups.status(), StatusCode::OK);
     assert_eq!(json_body(groups).await[0], "All Item Groups");
+}
+
+#[tokio::test]
+async fn admin_item_group_tree_returns_parent_shape() {
+    let state = test_state();
+    let token = session(&state, PrincipalRole::Admin).await;
+
+    let response = build_router(state)
+        .oneshot(request("GET", "/v1/mobile/admin/item-groups/tree", &token))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let value = json_body(response).await;
+    assert_eq!(value[0]["name"], "All Item Groups");
+    assert_eq!(value[1]["name"], "Xomashyo");
+    assert_eq!(value[1]["parent_item_group"], "All Item Groups");
+    assert_eq!(value[2]["name"], "plyonka");
+    assert_eq!(value[2]["parent_item_group"], "Xomashyo");
 }
 
 #[tokio::test]
@@ -941,6 +961,29 @@ impl AdminReadPort for FakeAdminReadPort {
         Ok(vec![
             "All Item Groups".to_string(),
             "All Item Groups".to_string(),
+        ])
+    }
+
+    async fn item_group_tree(&self) -> Result<Vec<AdminItemGroup>, AdminPortError> {
+        Ok(vec![
+            AdminItemGroup {
+                name: "All Item Groups".to_string(),
+                item_group_name: "All Item Groups".to_string(),
+                parent_item_group: String::new(),
+                is_group: true,
+            },
+            AdminItemGroup {
+                name: "Xomashyo".to_string(),
+                item_group_name: "Xomashyo".to_string(),
+                parent_item_group: "All Item Groups".to_string(),
+                is_group: true,
+            },
+            AdminItemGroup {
+                name: "plyonka".to_string(),
+                item_group_name: "plyonka".to_string(),
+                parent_item_group: "Xomashyo".to_string(),
+                is_group: true,
+            },
         ])
     }
 

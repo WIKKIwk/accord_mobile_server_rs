@@ -190,6 +190,29 @@ impl AdminReadPort for ErpnextClient {
             .collect())
     }
 
+    async fn item_group_tree(&self) -> Result<Vec<AdminItemGroup>, AdminPortError> {
+        let payload: ListResponse<ItemGroupRow> = self
+            .admin_get_json(
+                "/api/resource/Item Group",
+                &[
+                    (
+                        "fields",
+                        r#"["name","item_group_name","parent_item_group","is_group","lft","rgt"]"#
+                            .to_string(),
+                    ),
+                    ("limit_page_length", "500".to_string()),
+                    ("order_by", "lft asc, name asc".to_string()),
+                ],
+            )
+            .await?;
+        Ok(payload
+            .data
+            .into_iter()
+            .map(item_group)
+            .filter(|group| !group.name.is_empty())
+            .collect())
+    }
+
     async fn assigned_supplier_items(
         &self,
         supplier_ref: &str,
