@@ -18,6 +18,7 @@ use crate::store::push_token_store::PushTokenStore;
 
 #[derive(Clone)]
 pub struct AppState {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub config: Arc<AppConfig>,
     pub admin: AdminService,
     pub auth: AuthService,

@@ -1,7 +1,7 @@
-use axum::extract::State;
+use axum::Router;
+use axum::body::Body;
+use axum::http::{Response, StatusCode, header};
 use axum::routing::any;
-use axum::{Json, Router};
-use serde::Serialize;
 use tower_http::trace::TraceLayer;
 
 use crate::app::AppState;
@@ -10,8 +10,9 @@ use crate::http::handlers::{
 };
 
 pub fn build_router(state: AppState) -> Router {
-    Router::new()
-        .route("/healthz", any(healthz))
+    let health_routes = Router::new().route("/healthz", any(healthz));
+
+    let api_routes = Router::new()
         .route("/v1/mobile/auth/login", any(auth::login))
         .route("/v1/mobile/auth/logout", any(auth::logout))
         .route("/v1/mobile/me", any(auth::me))
@@ -194,16 +195,17 @@ pub fn build_router(state: AppState) -> Router {
             any(admin::werka_code_regenerate),
         )
         .layer(TraceLayer::new_for_http())
-        .with_state(state)
+        .with_state(state);
+
+    health_routes.merge(api_routes)
 }
 
-#[derive(Serialize)]
-struct HealthResponse {
-    ok: bool,
-}
+const HEALTHZ_BODY: &str = r#"{"ok":true}"#;
 
-async fn healthz(State(state): State<AppState>) -> Json<HealthResponse> {
-    let _ = state.config.bind_addr;
-
-    Json(HealthResponse { ok: true })
+async fn healthz() -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(HEALTHZ_BODY))
+        .expect("static health response is valid")
 }

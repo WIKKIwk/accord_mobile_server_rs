@@ -13,6 +13,7 @@ mod store;
 
 use crate::app::AppState;
 use crate::config::AppConfig;
+use axum::serve::ListenerExt;
 
 #[tokio::main]
 async fn main() -> Result<(), error::AppError> {
@@ -29,6 +30,11 @@ async fn main() -> Result<(), error::AppError> {
 
     tracing::info!(%bind_addr, "starting accord mobile server rs");
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
+    let listener = listener.tap_io(|tcp_stream| {
+        if let Err(error) = tcp_stream.set_nodelay(true) {
+            tracing::trace!(%error, "failed to enable TCP_NODELAY");
+        }
+    });
     axum::serve(listener, app).await?;
 
     Ok(())
