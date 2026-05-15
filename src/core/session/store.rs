@@ -133,8 +133,25 @@ impl LmdbSessionStore {
 impl SessionStore for LmdbSessionStore {
     async fn get(&self, token: &str) -> Result<Option<SessionRecord>, AppError> {
         let key = session_key(token);
-        let rtxn = self.env.read_txn().map_err(lmdb_error)?;
-        self.db.get(&rtxn, &key).map_err(lmdb_error)
+        let record = {
+            let rtxn = self.env.read_txn().map_err(lmdb_error)?;
+            self.db.get(&rtxn, &key).map_err(lmdb_error)?
+        };
+        if record.is_some() {
+            return Ok(record);
+        }
+
+        let legacy_record = {
+            let rtxn = self.env.read_txn().map_err(lmdb_error)?;
+            self.db.get(&rtxn, token.as_bytes()).map_err(lmdb_error)?
+        };
+        if let Some(record) = legacy_record {
+            self.put(token, record.clone()).await?;
+            self.delete_legacy_key(token).await?;
+            return Ok(Some(record));
+        }
+
+        Ok(None)
     }
 
     async fn put(&self, token: &str, record: SessionRecord) -> Result<(), AppError> {
@@ -150,6 +167,20 @@ impl SessionStore for LmdbSessionStore {
         let _guard = self.write_lock.lock().await;
         let mut wtxn = self.env.write_txn().map_err(lmdb_error)?;
         self.db.delete(&mut wtxn, &key).map_err(lmdb_error)?;
+        self.db
+            .delete(&mut wtxn, token.as_bytes())
+            .map_err(lmdb_error)?;
+        wtxn.commit().map_err(lmdb_error)
+    }
+}
+
+impl LmdbSessionStore {
+    async fn delete_legacy_key(&self, token: &str) -> Result<(), AppError> {
+        let _guard = self.write_lock.lock().await;
+        let mut wtxn = self.env.write_txn().map_err(lmdb_error)?;
+        self.db
+            .delete(&mut wtxn, token.as_bytes())
+            .map_err(lmdb_error)?;
         wtxn.commit().map_err(lmdb_error)
     }
 }
@@ -160,4 +191,54 @@ fn session_key(token: &str) -> [u8; 32] {
 
 fn lmdb_error(error: heed::Error) -> AppError {
     AppError::Storage(format!("lmdb session store failed: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LmdbSessionStore, SessionStore, session_key};
+    use crate::core::auth::models::{Principal, PrincipalRole};
+    use crate::core::session::models::SessionRecord;
+
+    #[tokio::test]
+    async fn lmdb_get_migrates_legacy_raw_token_key() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = LmdbSessionStore::open(dir.path().join("sessions.lmdb"), 1024 * 1024)
+            .expect("lmdb store");
+        let token = "legacy-token";
+        let record = SessionRecord::new(principal(), time::OffsetDateTime::now_utc(), None, None);
+
+        {
+            let mut wtxn = store.env.write_txn().expect("write txn");
+            store
+                .db
+                .put(&mut wtxn, token.as_bytes(), &record)
+                .expect("put legacy session");
+            wtxn.commit().expect("commit legacy session");
+        }
+
+        let loaded = store.get(token).await.expect("get migrated session");
+        assert_eq!(loaded.expect("session").principal.ref_, "admin");
+
+        let key = session_key(token);
+        let rtxn = store.env.read_txn().expect("read txn");
+        assert!(
+            store
+                .db
+                .get(&rtxn, token.as_bytes())
+                .expect("legacy key")
+                .is_none()
+        );
+        assert!(store.db.get(&rtxn, &key).expect("hashed key").is_some());
+    }
+
+    fn principal() -> Principal {
+        Principal {
+            role: PrincipalRole::Admin,
+            display_name: "Admin".to_string(),
+            legal_name: "Admin".to_string(),
+            ref_: "admin".to_string(),
+            phone: "+998880000000".to_string(),
+            avatar_url: String::new(),
+        }
+    }
 }
