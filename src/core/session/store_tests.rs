@@ -177,10 +177,10 @@ fn record_with_expiry(expires_at: time::OffsetDateTime) -> SessionRecord {
 
 fn expiry_index_len(store: &LmdbSessionStore) -> usize {
     let rtxn = store.env.read_txn().expect("read txn");
-    store
-        .expires_db
-        .iter(&rtxn)
-        .expect("expiry iter")
-        .map(|entry| entry.expect("expiry entry"))
-        .count()
+    let mut count = 0;
+    for entry in store.expires_db.iter(&rtxn).expect("expiry iter") {
+        entry.expect("expiry entry");
+        count += 1;
+    }
+    count
 }
