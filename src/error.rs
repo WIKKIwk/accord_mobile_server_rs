@@ -13,6 +13,8 @@ pub enum AppError {
     Io(#[from] std::io::Error),
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("storage error: {0}")]
+    Storage(String),
     #[error("time parse error: {0}")]
     TimeParse(#[from] time::error::Parse),
 }
@@ -29,6 +31,7 @@ impl IntoResponse for AppError {
             AppError::InvalidConfig { .. } => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Json(_) => StatusCode::BAD_REQUEST,
+            AppError::Storage(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::TimeParse(_) => StatusCode::BAD_REQUEST,
         };
 

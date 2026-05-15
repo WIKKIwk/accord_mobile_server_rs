@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use heed::types::{SerdeJson, Str};
+use heed::{Database, Env, EnvOpenOptions};
 use tokio::sync::Mutex;
 
 use crate::core::session::models::SessionRecord;
@@ -91,4 +93,63 @@ impl SessionStore for JsonSessionStore {
         }
         Ok(())
     }
+}
+
+pub struct LmdbSessionStore {
+    env: Env,
+    db: Database<Str, SerdeJson<SessionRecord>>,
+    write_lock: Arc<Mutex<()>>,
+}
+
+impl LmdbSessionStore {
+    pub fn open(path: PathBuf, map_size_bytes: usize) -> Result<Self, AppError> {
+        std::fs::create_dir_all(&path)?;
+        let map_size = map_size_bytes.max(1024 * 1024);
+        let env = unsafe {
+            // LMDB requires the caller to ensure the environment path is used
+            // consistently. This service owns this directory for sessions only.
+            EnvOpenOptions::new()
+                .map_size(map_size)
+                .max_dbs(2)
+                .open(&path)
+        }
+        .map_err(lmdb_error)?;
+        let mut wtxn = env.write_txn().map_err(lmdb_error)?;
+        let db = env
+            .create_database(&mut wtxn, Some("sessions"))
+            .map_err(lmdb_error)?;
+        wtxn.commit().map_err(lmdb_error)?;
+
+        Ok(Self {
+            env,
+            db,
+            write_lock: Arc::new(Mutex::new(())),
+        })
+    }
+}
+
+#[async_trait]
+impl SessionStore for LmdbSessionStore {
+    async fn get(&self, token: &str) -> Result<Option<SessionRecord>, AppError> {
+        let rtxn = self.env.read_txn().map_err(lmdb_error)?;
+        self.db.get(&rtxn, token).map_err(lmdb_error)
+    }
+
+    async fn put(&self, token: &str, record: SessionRecord) -> Result<(), AppError> {
+        let _guard = self.write_lock.lock().await;
+        let mut wtxn = self.env.write_txn().map_err(lmdb_error)?;
+        self.db.put(&mut wtxn, token, &record).map_err(lmdb_error)?;
+        wtxn.commit().map_err(lmdb_error)
+    }
+
+    async fn delete(&self, token: &str) -> Result<(), AppError> {
+        let _guard = self.write_lock.lock().await;
+        let mut wtxn = self.env.write_txn().map_err(lmdb_error)?;
+        self.db.delete(&mut wtxn, token).map_err(lmdb_error)?;
+        wtxn.commit().map_err(lmdb_error)
+    }
+}
+
+fn lmdb_error(error: heed::Error) -> AppError {
+    AppError::Storage(format!("lmdb session store failed: {error}"))
 }

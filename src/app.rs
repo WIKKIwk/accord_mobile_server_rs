@@ -41,10 +41,37 @@ impl AppState {
         let push = PushService::new(push_token_store.clone())
             .with_sender(discover_push_sender(push_token_store));
         let mut werka = WerkaService::new();
-        let sessions = SessionManager::persistent(
-            config.session_store_path.clone(),
-            config.session_ttl_seconds,
-        );
+        let session_store_backend =
+            std::env::var("MOBILE_API_SESSION_STORE_BACKEND").unwrap_or_else(|_| "json".into());
+        let sessions = match session_store_backend.trim().to_lowercase().as_str() {
+            "lmdb" => match SessionManager::lmdb(
+                session_lmdb_path(),
+                session_lmdb_map_size_bytes(),
+                config.session_ttl_seconds,
+            ) {
+                Ok(sessions) => {
+                    tracing::info!(
+                        path = %session_lmdb_path().display(),
+                        "LMDB session store enabled"
+                    );
+                    sessions
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        %error,
+                        "LMDB session store unavailable; falling back to JSON session store"
+                    );
+                    SessionManager::persistent(
+                        config.session_store_path.clone(),
+                        config.session_ttl_seconds,
+                    )
+                }
+            },
+            _ => SessionManager::persistent(
+                config.session_store_path.clone(),
+                config.session_ttl_seconds,
+            ),
+        };
         let ai_key = std::env::var("GEMINI_API_KEY").unwrap_or_default();
         if !ai_key.trim().is_empty() {
             werka = werka.with_ai_search(Arc::new(WerkaAiSearchService::new(
@@ -127,4 +154,20 @@ impl AppState {
             sessions,
         }
     }
+}
+
+fn session_lmdb_path() -> std::path::PathBuf {
+    std::env::var("MOBILE_API_SESSION_LMDB_PATH")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("data/mobile_sessions.lmdb"))
+}
+
+fn session_lmdb_map_size_bytes() -> usize {
+    std::env::var("MOBILE_API_SESSION_LMDB_MAP_SIZE_MB")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(64)
+        * 1024
+        * 1024
 }

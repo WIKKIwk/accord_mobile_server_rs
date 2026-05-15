@@ -442,6 +442,9 @@ failure responses.
 | `MOBILE_API_ADDR` | `:8081` | Bind address. Leading `:8081` is normalized to `0.0.0.0:8081`. |
 | `MOBILE_API_SESSION_STORE_PATH` | `data/mobile_sessions.json` | Persistent session store path. |
 | `MOBILE_API_SESSION_STORE` | fallback only | Legacy session store variable used when `MOBILE_API_SESSION_STORE_PATH` is absent. |
+| `MOBILE_API_SESSION_STORE_BACKEND` | `json` | Session backend: `json` or `lmdb`. JSON remains the compatibility default. |
+| `MOBILE_API_SESSION_LMDB_PATH` | `data/mobile_sessions.lmdb` | LMDB environment directory when the LMDB session backend is enabled. |
+| `MOBILE_API_SESSION_LMDB_MAP_SIZE_MB` | `64` | LMDB map size for session storage. |
 | `MOBILE_API_PROFILE_STORE_PATH` | `data/mobile_profile_prefs.json` | Profile preferences store path. |
 | `MOBILE_API_PUSH_TOKEN_STORE_PATH` | `data/mobile_push_tokens.json` | Push token store path. |
 | `MOBILE_API_ADMIN_SUPPLIER_STORE_PATH` | `data/mobile_admin_suppliers.json` | Admin supplier/customer state store path. |
@@ -514,6 +517,9 @@ ERP_DEFAULT_UOM=Kg
 ERP_TIMEOUT_SECONDS=15
 
 MOBILE_API_SESSION_STORE_PATH=data/mobile_sessions.json
+MOBILE_API_SESSION_STORE_BACKEND=json
+MOBILE_API_SESSION_LMDB_PATH=data/mobile_sessions.lmdb
+MOBILE_API_SESSION_LMDB_MAP_SIZE_MB=64
 MOBILE_API_PROFILE_STORE_PATH=data/mobile_profile_prefs.json
 MOBILE_API_PUSH_TOKEN_STORE_PATH=data/mobile_push_tokens.json
 MOBILE_API_ADMIN_SUPPLIER_STORE_PATH=data/mobile_admin_suppliers.json

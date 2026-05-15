@@ -7,7 +7,7 @@ use rand::RngCore;
 
 use crate::core::auth::models::Principal;
 use crate::core::session::models::SessionRecord;
-use crate::core::session::store::{JsonSessionStore, SessionStore};
+use crate::core::session::store::{JsonSessionStore, LmdbSessionStore, SessionStore};
 use crate::error::AppError;
 
 #[derive(Clone)]
@@ -19,6 +19,17 @@ pub struct SessionManager {
 impl SessionManager {
     pub fn persistent(path: PathBuf, ttl_seconds: Option<u64>) -> Self {
         Self::with_store(Arc::new(JsonSessionStore::persistent(path)), ttl_seconds)
+    }
+
+    pub fn lmdb(
+        path: PathBuf,
+        map_size_bytes: usize,
+        ttl_seconds: Option<u64>,
+    ) -> Result<Self, AppError> {
+        Ok(Self::with_store(
+            Arc::new(LmdbSessionStore::open(path, map_size_bytes)?),
+            ttl_seconds,
+        ))
     }
 
     #[allow(dead_code)]
@@ -114,5 +125,30 @@ mod tests {
 
         let principal = sessions.get(&token).await.expect("get session");
         assert_eq!(principal.display_name, "Alias");
+    }
+
+    #[tokio::test]
+    async fn lmdb_store_round_trips_session() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sessions =
+            SessionManager::lmdb(dir.path().join("sessions.lmdb"), 1024 * 1024, Some(60))
+                .expect("lmdb sessions");
+        let token = sessions
+            .create(Principal {
+                role: PrincipalRole::Admin,
+                display_name: "Admin".to_string(),
+                legal_name: "Admin".to_string(),
+                ref_: "admin".to_string(),
+                phone: "+998880000000".to_string(),
+                avatar_url: String::new(),
+            })
+            .await
+            .expect("create session");
+
+        let principal = sessions.get(&token).await.expect("get session");
+        assert_eq!(principal.ref_, "admin");
+
+        sessions.delete(&token).await;
+        assert!(sessions.get(&token).await.is_err());
     }
 }
