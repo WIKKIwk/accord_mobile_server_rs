@@ -28,7 +28,7 @@ fn config() -> AppConfig {
         werka_prefix: "20".to_string(),
         werka_code: "20ABCDEF1234".to_string(),
         werka_name: "Werka".to_string(),
-        werka_phone: "+99888862440".to_string(),
+        werka_phone: "+998888862440".to_string(),
         admin_phone: "+998880000000".to_string(),
         admin_name: "Admin".to_string(),
         admin_code: "19621978".to_string(),
@@ -44,6 +44,7 @@ fn config() -> AppConfig {
 
 #[test]
 fn normalizes_phone_like_go() {
+    assert_eq!(normalize_phone("888862440").unwrap(), "+998888862440");
     assert_eq!(normalize_phone("998901234567").unwrap(), "+998901234567");
     assert!(normalize_phone("+12345").is_err());
     assert!(normalize_phone("+998 90").is_err());
@@ -65,12 +66,17 @@ async fn admin_login_does_not_need_erp() {
 async fn werka_login_requires_configured_phone() {
     let auth = AuthService::new(&config());
     let principal = auth
-        .login("+99888862440", "20ABCDEF1234")
+        .login("+998888862440", "20ABCDEF1234")
         .await
         .expect("werka login");
 
     assert_eq!(principal.role, PrincipalRole::Werka);
     assert_eq!(principal.ref_, "werka");
+    let local_phone_principal = auth
+        .login("888862440", "20ABCDEF1234")
+        .await
+        .expect("werka login with local phone");
+    assert_eq!(local_phone_principal.role, PrincipalRole::Werka);
     assert!(auth.login("+998880000000", "20ABCDEF1234").await.is_err());
 }
 

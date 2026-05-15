@@ -295,6 +295,10 @@ pub fn normalize_phone(input: &str) -> Result<String, AuthError> {
         digits.push(ch);
     }
 
+    if !trimmed.starts_with('+') && digits.len() == 9 {
+        digits = format!("998{digits}");
+    }
+
     if digits.len() < 9 || digits.len() > 12 {
         return Err(AuthError::InvalidCredentials);
     }
