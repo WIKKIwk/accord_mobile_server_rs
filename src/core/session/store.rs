@@ -14,7 +14,6 @@ pub trait SessionStore: Send + Sync {
     async fn get(&self, token: &str) -> Result<Option<SessionRecord>, AppError>;
     async fn put(&self, token: &str, record: SessionRecord) -> Result<(), AppError>;
     async fn delete(&self, token: &str) -> Result<(), AppError>;
-    async fn delete_expired(&self, now: time::OffsetDateTime) -> Result<(), AppError>;
 }
 
 #[derive(Clone)]
@@ -55,6 +54,8 @@ impl JsonSessionStore {
             Some(path) => json_file::read_map(path).await?,
             None => BTreeMap::new(),
         };
+        let now = time::OffsetDateTime::now_utc();
+        state.sessions.retain(|_, record| !record.is_expired(now));
         state.loaded = true;
         Ok(())
     }
@@ -86,17 +87,6 @@ impl SessionStore for JsonSessionStore {
         let mut state = self.state.lock().await;
         self.load_if_needed(&mut state).await?;
         if state.sessions.remove(token).is_some() {
-            self.save(&state).await?;
-        }
-        Ok(())
-    }
-
-    async fn delete_expired(&self, now: time::OffsetDateTime) -> Result<(), AppError> {
-        let mut state = self.state.lock().await;
-        self.load_if_needed(&mut state).await?;
-        let before = state.sessions.len();
-        state.sessions.retain(|_, record| !record.is_expired(now));
-        if state.sessions.len() != before {
             self.save(&state).await?;
         }
         Ok(())

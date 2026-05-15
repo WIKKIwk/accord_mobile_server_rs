@@ -34,7 +34,6 @@ impl SessionManager {
     pub async fn create(&self, principal: Principal) -> Result<String, AppError> {
         let token = generate_token();
         let now = time::OffsetDateTime::now_utc();
-        self.store.delete_expired(now).await?;
         let record = SessionRecord::new(principal, now, None, self.ttl_seconds);
         self.store.put(&token, record).await?;
         Ok(token)
