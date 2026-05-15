@@ -5,6 +5,7 @@ use crate::config::{AppConfig, DotEnvPersister};
 use crate::core::admin::service::AdminService;
 use crate::core::auth::service::AuthService;
 use crate::core::customer::service::CustomerService;
+use crate::core::profile::ports::ProfileStorePort;
 use crate::core::profile::service::ProfileService;
 use crate::core::push::service::PushService;
 use crate::core::session::manager::SessionManager;
@@ -13,7 +14,7 @@ use crate::erpdb::reader::DirectDbReader;
 use crate::erpnext::client::ErpnextClient;
 use crate::fcm::discover_push_sender;
 use crate::store::admin_state_store::AdminSupplierStateStore;
-use crate::store::profile_store::ProfileStore;
+use crate::store::profile_store::{LmdbProfileStore, ProfileStore};
 use crate::store::push_token_store::PushTokenStore;
 
 #[derive(Clone)]
@@ -36,7 +37,7 @@ impl AppState {
             AdminService::new(&config).with_env_persister(Arc::new(DotEnvPersister::new(".env")));
         admin = admin.with_auth_config_sink(Arc::new(auth.clone()));
         let mut customer = CustomerService::new();
-        let profile_store = Arc::new(ProfileStore::new(config.profile_store_path.clone()));
+        let profile_store = build_profile_store(&config);
         let push_token_store = Arc::new(PushTokenStore::new(config.push_token_store_path.clone()));
         let mut profiles = ProfileService::new(config.erp_url.clone()).with_store(profile_store);
         let push = PushService::new(push_token_store.clone())
@@ -165,6 +166,51 @@ fn session_lmdb_path() -> std::path::PathBuf {
 
 fn session_lmdb_map_size_bytes() -> usize {
     std::env::var("MOBILE_API_SESSION_LMDB_MAP_SIZE_MB")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(64)
+        * 1024
+        * 1024
+}
+
+fn build_profile_store(config: &AppConfig) -> Arc<dyn ProfileStorePort> {
+    let backend =
+        std::env::var("MOBILE_API_PROFILE_STORE_BACKEND").unwrap_or_else(|_| "json".into());
+    match backend.trim().to_lowercase().as_str() {
+        "lmdb" => match LmdbProfileStore::open(
+            profile_lmdb_path(),
+            profile_lmdb_map_size_bytes(),
+            Some(config.profile_store_path.clone()),
+        ) {
+            Ok(store) => {
+                tracing::info!(
+                    path = %profile_lmdb_path().display(),
+                    legacy_json_path = %config.profile_store_path.display(),
+                    "LMDB profile preference store enabled"
+                );
+                Arc::new(store)
+            }
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "LMDB profile preference store unavailable; falling back to JSON profile store"
+                );
+                Arc::new(ProfileStore::new(config.profile_store_path.clone()))
+            }
+        },
+        _ => Arc::new(ProfileStore::new(config.profile_store_path.clone())),
+    }
+}
+
+fn profile_lmdb_path() -> std::path::PathBuf {
+    std::env::var("MOBILE_API_PROFILE_LMDB_PATH")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("data/mobile_profile_prefs.lmdb"))
+}
+
+fn profile_lmdb_map_size_bytes() -> usize {
+    std::env::var("MOBILE_API_PROFILE_LMDB_MAP_SIZE_MB")
         .ok()
         .and_then(|raw| raw.trim().parse::<usize>().ok())
         .filter(|value| *value > 0)

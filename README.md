@@ -74,7 +74,7 @@ The service exists to provide the mobile API for the operational flow around:
 
 The implementation is organized as a layered service rather than a monolithic
 handler file. HTTP handlers are thin adapters; domain services contain business
-rules; ERPNext REST, direct MariaDB reads, JSON stores, push, and AI are plugged
+rules; ERPNext REST, direct MariaDB reads, local state stores, push, and AI are plugged
 in through explicit ports.
 
 ## System Architecture
@@ -89,7 +89,7 @@ flowchart TB
 
     ERPNext[ERPNext REST API<br/>Supplier, Customer, Item,<br/>Purchase Receipt, Delivery Note,<br/>Comment, File]
     MariaDB[ERPNext MariaDB direct reads<br/>fast read models and search]
-    JsonStores[Local JSON stores<br/>sessions, profile prefs,<br/>push tokens, admin supplier state]
+    LocalState[Local state stores<br/>LMDB-ready sessions/profile prefs,<br/>JSON push tokens/admin supplier state]
     FCM[Firebase Cloud Messaging<br/>HTTP v1]
     Gemini[Gemini Vision<br/>Werka AI search]
     Env[.env runtime persistence<br/>admin settings updates]
@@ -100,7 +100,7 @@ flowchart TB
     Core --> Ports
     Ports --> ERPNext
     Ports --> MariaDB
-    Ports --> JsonStores
+    Ports --> LocalState
     Ports --> FCM
     Ports --> Gemini
     Core --> Env
@@ -176,7 +176,7 @@ The implementation avoids concentrating the system in a single large file:
 - `src/core` contains domain models, service logic, ports, and focused tests.
 - `src/erpnext` contains ERPNext REST adapters.
 - `src/erpdb` contains direct MariaDB read models.
-- `src/store` contains JSON-backed state stores.
+- `src/store` contains local JSON and LMDB-backed state stores.
 - `src/fcm.rs` contains Firebase Cloud Messaging HTTP v1 delivery.
 - `src/ai` contains Gemini Vision integration for Werka image search.
 
@@ -266,18 +266,19 @@ the parent is promoted to a group if needed. When a legacy or manually-created
 node already has children but is still marked as a leaf, the move flow promotes
 it before asking ERPNext to save the new parent.
 
-### Local JSON state
+### Local state
 
-The service keeps small local operational state in JSON files:
+The service keeps small local operational state on disk:
 
-- session store: bearer tokens and principals;
-- profile prefs: nickname and user-specific profile preferences;
-- push token store: role/ref keys mapped to FCM device tokens;
+- session store: bearer tokens and principals, with `json` and `lmdb` backends;
+- profile prefs: nickname and user-specific profile preferences, with `json` and `lmdb` backends;
+- push token store: role/ref keys mapped to FCM device tokens, currently JSON-backed;
 - admin supplier/customer state: generated codes, blocked/removed flags,
   assignment cache, and cooldown metadata.
 
-These stores are intentionally local, explicit, inspectable, and compatible with
-the mobile operational workflow.
+JSON remains the compatibility default during migration. LMDB-backed stores use
+the JSON files as legacy fallback input where applicable, so existing data can
+move gradually without changing the mobile API contract.
 
 ### Push notifications
 
@@ -446,6 +447,9 @@ failure responses.
 | `MOBILE_API_SESSION_LMDB_PATH` | `data/mobile_sessions.lmdb` | LMDB environment directory when the LMDB session backend is enabled. |
 | `MOBILE_API_SESSION_LMDB_MAP_SIZE_MB` | `64` | LMDB map size for session storage. |
 | `MOBILE_API_PROFILE_STORE_PATH` | `data/mobile_profile_prefs.json` | Profile preferences store path. |
+| `MOBILE_API_PROFILE_STORE_BACKEND` | `json` | Profile preferences backend: `json` or `lmdb`. JSON remains the compatibility default. |
+| `MOBILE_API_PROFILE_LMDB_PATH` | `data/mobile_profile_prefs.lmdb` | LMDB environment directory when the LMDB profile backend is enabled. |
+| `MOBILE_API_PROFILE_LMDB_MAP_SIZE_MB` | `64` | LMDB map size for profile preference storage. |
 | `MOBILE_API_PUSH_TOKEN_STORE_PATH` | `data/mobile_push_tokens.json` | Push token store path. |
 | `MOBILE_API_ADMIN_SUPPLIER_STORE_PATH` | `data/mobile_admin_suppliers.json` | Admin supplier/customer state store path. |
 | `MOBILE_API_SESSION_TTL_HOURS` | `720` | Bearer session TTL in hours. |
@@ -521,6 +525,9 @@ MOBILE_API_SESSION_STORE_BACKEND=json
 MOBILE_API_SESSION_LMDB_PATH=data/mobile_sessions.lmdb
 MOBILE_API_SESSION_LMDB_MAP_SIZE_MB=64
 MOBILE_API_PROFILE_STORE_PATH=data/mobile_profile_prefs.json
+MOBILE_API_PROFILE_STORE_BACKEND=json
+MOBILE_API_PROFILE_LMDB_PATH=data/mobile_profile_prefs.lmdb
+MOBILE_API_PROFILE_LMDB_MAP_SIZE_MB=64
 MOBILE_API_PUSH_TOKEN_STORE_PATH=data/mobile_push_tokens.json
 MOBILE_API_ADMIN_SUPPLIER_STORE_PATH=data/mobile_admin_suppliers.json
 MOBILE_API_SESSION_TTL_HOURS=720
