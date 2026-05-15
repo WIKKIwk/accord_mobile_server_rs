@@ -41,6 +41,10 @@ admin item and item group reads.
 Full benchmark notes are available in
 [docs/benchmarks/2026-05-14-go-vs-rust.md](docs/benchmarks/2026-05-14-go-vs-rust.md).
 
+For the current performance state, restored ERPNext setup, completed
+optimizations, benchmark results, hard constraints, and next work, see
+[AI_HANDOFF_PERFORMANCE.md](AI_HANDOFF_PERFORMANCE.md).
+
 `accord_mobile_server_rs` is an independent Rust service for the Accord mobile
 backend. It is a standalone Axum/Tokio application that speaks directly to the
 mobile clients, ERPNext, the ERPNext MariaDB database when direct reads are
