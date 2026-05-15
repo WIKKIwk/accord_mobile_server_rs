@@ -89,7 +89,7 @@ flowchart TB
 
     ERPNext[ERPNext REST API<br/>Supplier, Customer, Item,<br/>Purchase Receipt, Delivery Note,<br/>Comment, File]
     MariaDB[ERPNext MariaDB direct reads<br/>fast read models and search]
-    LocalState[Local state stores<br/>LMDB-ready sessions/profile prefs,<br/>JSON push tokens/admin supplier state]
+    LocalState[Local state stores<br/>LMDB-ready sessions/profile prefs/push tokens,<br/>JSON admin supplier state]
     FCM[Firebase Cloud Messaging<br/>HTTP v1]
     Gemini[Gemini Vision<br/>Werka AI search]
     Env[.env runtime persistence<br/>admin settings updates]
@@ -272,7 +272,7 @@ The service keeps small local operational state on disk:
 
 - session store: bearer tokens and principals, with `json` and `lmdb` backends;
 - profile prefs: nickname and user-specific profile preferences, with `json` and `lmdb` backends;
-- push token store: role/ref keys mapped to FCM device tokens, currently JSON-backed;
+- push token store: role/ref keys mapped to FCM device tokens, with `json` and `lmdb` backends;
 - admin supplier/customer state: generated codes, blocked/removed flags,
   assignment cache, and cooldown metadata.
 
@@ -451,6 +451,9 @@ failure responses.
 | `MOBILE_API_PROFILE_LMDB_PATH` | `data/mobile_profile_prefs.lmdb` | LMDB environment directory when the LMDB profile backend is enabled. |
 | `MOBILE_API_PROFILE_LMDB_MAP_SIZE_MB` | `64` | LMDB map size for profile preference storage. |
 | `MOBILE_API_PUSH_TOKEN_STORE_PATH` | `data/mobile_push_tokens.json` | Push token store path. |
+| `MOBILE_API_PUSH_TOKEN_STORE_BACKEND` | `json` | Push token backend: `json` or `lmdb`. JSON remains the compatibility default. |
+| `MOBILE_API_PUSH_TOKEN_LMDB_PATH` | `data/mobile_push_tokens.lmdb` | LMDB environment directory when the LMDB push token backend is enabled. |
+| `MOBILE_API_PUSH_TOKEN_LMDB_MAP_SIZE_MB` | `64` | LMDB map size for push token storage. |
 | `MOBILE_API_ADMIN_SUPPLIER_STORE_PATH` | `data/mobile_admin_suppliers.json` | Admin supplier/customer state store path. |
 | `MOBILE_API_SESSION_TTL_HOURS` | `720` | Bearer session TTL in hours. |
 | `ERP_TIMEOUT_SECONDS` | `15` | ERPNext, AI, and HTTP client timeout baseline. |
@@ -529,6 +532,9 @@ MOBILE_API_PROFILE_STORE_BACKEND=json
 MOBILE_API_PROFILE_LMDB_PATH=data/mobile_profile_prefs.lmdb
 MOBILE_API_PROFILE_LMDB_MAP_SIZE_MB=64
 MOBILE_API_PUSH_TOKEN_STORE_PATH=data/mobile_push_tokens.json
+MOBILE_API_PUSH_TOKEN_STORE_BACKEND=json
+MOBILE_API_PUSH_TOKEN_LMDB_PATH=data/mobile_push_tokens.lmdb
+MOBILE_API_PUSH_TOKEN_LMDB_MAP_SIZE_MB=64
 MOBILE_API_ADMIN_SUPPLIER_STORE_PATH=data/mobile_admin_suppliers.json
 MOBILE_API_SESSION_TTL_HOURS=720
 

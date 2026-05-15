@@ -7,6 +7,7 @@ use crate::core::auth::service::AuthService;
 use crate::core::customer::service::CustomerService;
 use crate::core::profile::ports::ProfileStorePort;
 use crate::core::profile::service::ProfileService;
+use crate::core::push::ports::PushTokenStorePort;
 use crate::core::push::service::PushService;
 use crate::core::session::manager::SessionManager;
 use crate::core::werka::service::WerkaService;
@@ -15,7 +16,7 @@ use crate::erpnext::client::ErpnextClient;
 use crate::fcm::discover_push_sender;
 use crate::store::admin_state_store::AdminSupplierStateStore;
 use crate::store::profile_store::{LmdbProfileStore, ProfileStore};
-use crate::store::push_token_store::PushTokenStore;
+use crate::store::push_token_store::{LmdbPushTokenStore, PushTokenStore};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -38,7 +39,7 @@ impl AppState {
         admin = admin.with_auth_config_sink(Arc::new(auth.clone()));
         let mut customer = CustomerService::new();
         let profile_store = build_profile_store(&config);
-        let push_token_store = Arc::new(PushTokenStore::new(config.push_token_store_path.clone()));
+        let push_token_store = build_push_token_store(&config);
         let mut profiles = ProfileService::new(config.erp_url.clone()).with_store(profile_store);
         let push = PushService::new(push_token_store.clone())
             .with_sender(discover_push_sender(push_token_store));
@@ -211,6 +212,51 @@ fn profile_lmdb_path() -> std::path::PathBuf {
 
 fn profile_lmdb_map_size_bytes() -> usize {
     std::env::var("MOBILE_API_PROFILE_LMDB_MAP_SIZE_MB")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(64)
+        * 1024
+        * 1024
+}
+
+fn build_push_token_store(config: &AppConfig) -> Arc<dyn PushTokenStorePort> {
+    let backend =
+        std::env::var("MOBILE_API_PUSH_TOKEN_STORE_BACKEND").unwrap_or_else(|_| "json".into());
+    match backend.trim().to_lowercase().as_str() {
+        "lmdb" => match LmdbPushTokenStore::open(
+            push_token_lmdb_path(),
+            push_token_lmdb_map_size_bytes(),
+            Some(config.push_token_store_path.clone()),
+        ) {
+            Ok(store) => {
+                tracing::info!(
+                    path = %push_token_lmdb_path().display(),
+                    legacy_json_path = %config.push_token_store_path.display(),
+                    "LMDB push token store enabled"
+                );
+                Arc::new(store)
+            }
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "LMDB push token store unavailable; falling back to JSON push token store"
+                );
+                Arc::new(PushTokenStore::new(config.push_token_store_path.clone()))
+            }
+        },
+        _ => Arc::new(PushTokenStore::new(config.push_token_store_path.clone())),
+    }
+}
+
+fn push_token_lmdb_path() -> std::path::PathBuf {
+    std::env::var("MOBILE_API_PUSH_TOKEN_LMDB_PATH")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("data/mobile_push_tokens.lmdb"))
+}
+
+fn push_token_lmdb_map_size_bytes() -> usize {
+    std::env::var("MOBILE_API_PUSH_TOKEN_LMDB_MAP_SIZE_MB")
         .ok()
         .and_then(|raw| raw.trim().parse::<usize>().ok())
         .filter(|value| *value > 0)
