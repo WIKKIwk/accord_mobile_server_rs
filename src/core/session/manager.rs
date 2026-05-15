@@ -1,78 +1,52 @@
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use rand::RngCore;
-use tokio::sync::Mutex;
 
 use crate::core::auth::models::Principal;
 use crate::core::session::models::SessionRecord;
+use crate::core::session::store::{JsonSessionStore, SessionStore};
 use crate::error::AppError;
-use crate::store::json_file;
 
 #[derive(Clone)]
 pub struct SessionManager {
-    inner: Arc<Mutex<SessionState>>,
-}
-
-struct SessionState {
-    path: Option<PathBuf>,
+    store: Arc<dyn SessionStore>,
     ttl_seconds: Option<u64>,
-    loaded: bool,
-    sessions: BTreeMap<String, SessionRecord>,
 }
 
 impl SessionManager {
     pub fn persistent(path: PathBuf, ttl_seconds: Option<u64>) -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(SessionState {
-                path: Some(path),
-                ttl_seconds,
-                loaded: false,
-                sessions: BTreeMap::new(),
-            })),
-        }
+        Self::with_store(Arc::new(JsonSessionStore::persistent(path)), ttl_seconds)
     }
 
     #[allow(dead_code)]
     pub fn memory(ttl_seconds: Option<u64>) -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(SessionState {
-                path: None,
-                ttl_seconds,
-                loaded: true,
-                sessions: BTreeMap::new(),
-            })),
-        }
+        Self::with_store(Arc::new(JsonSessionStore::memory()), ttl_seconds)
+    }
+
+    pub fn with_store(store: Arc<dyn SessionStore>, ttl_seconds: Option<u64>) -> Self {
+        Self { store, ttl_seconds }
     }
 
     #[allow(dead_code)]
     pub async fn create(&self, principal: Principal) -> Result<String, AppError> {
         let token = generate_token();
-        let mut state = self.inner.lock().await;
-        state.load().await?;
-
         let now = time::OffsetDateTime::now_utc();
-        let record = SessionRecord::new(principal, now, None, state.ttl_seconds);
-        state.sessions.insert(token.clone(), record);
-        state.save().await?;
-
+        self.store.delete_expired(now).await?;
+        let record = SessionRecord::new(principal, now, None, self.ttl_seconds);
+        self.store.put(&token, record).await?;
         Ok(token)
     }
 
     pub async fn get(&self, token: &str) -> Result<Principal, AppError> {
-        let mut state = self.inner.lock().await;
-        state.load().await?;
-
-        let Some(record) = state.sessions.get(token).cloned() else {
+        let Some(record) = self.store.get(token).await? else {
             return Err(AppError::Unauthorized);
         };
 
         if record.is_expired(time::OffsetDateTime::now_utc()) {
-            state.sessions.remove(token);
-            state.save().await?;
+            self.store.delete(token).await?;
             return Err(AppError::Unauthorized);
         }
 
@@ -80,58 +54,17 @@ impl SessionManager {
     }
 
     pub async fn delete(&self, token: &str) {
-        let mut state = self.inner.lock().await;
-
-        if state.load().await.is_ok() && state.sessions.remove(token).is_some() {
-            let _ = state.save().await;
-        }
+        let _ = self.store.delete(token).await;
     }
 
     pub async fn update(&self, token: &str, principal: Principal) {
-        let mut state = self.inner.lock().await;
-
-        if state.load().await.is_err() {
-            return;
-        }
-
-        let Some(existing) = state.sessions.get(token) else {
+        let Ok(Some(existing)) = self.store.get(token).await else {
             return;
         };
 
         let now = time::OffsetDateTime::now_utc();
-        let record = SessionRecord::new(principal, now, existing.created_at, state.ttl_seconds);
-        state.sessions.insert(token.to_string(), record);
-        let _ = state.save().await;
-    }
-}
-
-impl SessionState {
-    async fn load(&mut self) -> Result<(), AppError> {
-        if self.loaded {
-            return Ok(());
-        }
-
-        self.sessions = match &self.path {
-            Some(path) => json_file::read_map(path).await?,
-            None => BTreeMap::new(),
-        };
-        self.drop_expired();
-        self.loaded = true;
-
-        Ok(())
-    }
-
-    async fn save(&self) -> Result<(), AppError> {
-        if let Some(path) = &self.path {
-            json_file::write_pretty(path, &self.sessions).await?;
-        }
-
-        Ok(())
-    }
-
-    fn drop_expired(&mut self) {
-        let now = time::OffsetDateTime::now_utc();
-        self.sessions.retain(|_, record| !record.is_expired(now));
+        let record = SessionRecord::new(principal, now, existing.created_at, self.ttl_seconds);
+        let _ = self.store.put(token, record).await;
     }
 }
 
