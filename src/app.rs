@@ -14,7 +14,7 @@ use crate::core::werka::service::WerkaService;
 use crate::erpdb::reader::DirectDbReader;
 use crate::erpnext::client::ErpnextClient;
 use crate::fcm::discover_push_sender;
-use crate::store::admin_state_store::AdminSupplierStateStore;
+use crate::store::admin_state_store::AdminSupplierStateBackend;
 use crate::store::profile_store::{LmdbProfileStore, ProfileStore};
 use crate::store::push_token_store::{LmdbPushTokenStore, PushTokenStore};
 
@@ -86,9 +86,7 @@ impl AppState {
 
         let mut erp_client = None;
         if config.erp_configured() {
-            let admin_state_store = Arc::new(AdminSupplierStateStore::new(
-                config.admin_supplier_store_path.clone(),
-            ));
+            let admin_state_store = Arc::new(build_admin_supplier_state_store(&config));
             let client = Arc::new(
                 ErpnextClient::new(
                     config.erp_url.clone(),
@@ -257,6 +255,51 @@ fn push_token_lmdb_path() -> std::path::PathBuf {
 
 fn push_token_lmdb_map_size_bytes() -> usize {
     std::env::var("MOBILE_API_PUSH_TOKEN_LMDB_MAP_SIZE_MB")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(64)
+        * 1024
+        * 1024
+}
+
+fn build_admin_supplier_state_store(config: &AppConfig) -> AdminSupplierStateBackend {
+    let backend =
+        std::env::var("MOBILE_API_ADMIN_SUPPLIER_STORE_BACKEND").unwrap_or_else(|_| "json".into());
+    match backend.trim().to_lowercase().as_str() {
+        "lmdb" => match AdminSupplierStateBackend::lmdb(
+            admin_supplier_lmdb_path(),
+            admin_supplier_lmdb_map_size_bytes(),
+            Some(config.admin_supplier_store_path.clone()),
+        ) {
+            Ok(store) => {
+                tracing::info!(
+                    path = %admin_supplier_lmdb_path().display(),
+                    legacy_json_path = %config.admin_supplier_store_path.display(),
+                    "LMDB admin supplier state store enabled"
+                );
+                store
+            }
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "LMDB admin supplier state store unavailable; falling back to JSON admin supplier state store"
+                );
+                AdminSupplierStateBackend::json(config.admin_supplier_store_path.clone())
+            }
+        },
+        _ => AdminSupplierStateBackend::json(config.admin_supplier_store_path.clone()),
+    }
+}
+
+fn admin_supplier_lmdb_path() -> std::path::PathBuf {
+    std::env::var("MOBILE_API_ADMIN_SUPPLIER_LMDB_PATH")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("data/mobile_admin_suppliers.lmdb"))
+}
+
+fn admin_supplier_lmdb_map_size_bytes() -> usize {
+    std::env::var("MOBILE_API_ADMIN_SUPPLIER_LMDB_MAP_SIZE_MB")
         .ok()
         .and_then(|raw| raw.trim().parse::<usize>().ok())
         .filter(|value| *value > 0)
