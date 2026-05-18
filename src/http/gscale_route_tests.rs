@@ -214,6 +214,67 @@ async fn rps_batch_print_uses_active_rs_batch_and_transaction_flow() {
 }
 
 #[tokio::test]
+async fn rps_batch_print_preserves_erp_failure_detail_without_502() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut state = test_state();
+    state.gscale = GscaleService::new()
+        .with_erp(Arc::new(FailingSubmitErp {
+            events: events.clone(),
+        }))
+        .with_driver(Arc::new(FakeDriver {
+            events: events.clone(),
+        }));
+    let token = session(&state, PrincipalRole::Werka).await;
+    let router = build_router(state);
+
+    let started = router
+        .clone()
+        .oneshot(request(
+            "POST",
+            "/v1/mobile/rps/batch/start",
+            &token,
+            r#"{
+                "client_batch_id":"batch-print-fail-1",
+                "driver_url":"http://127.0.0.1:39117",
+                "item_code":"ABCD Family",
+                "item_name":"ABCD Family",
+                "warehouse":"Stores - A",
+                "printer":"godex",
+                "print_mode":"label"
+            }"#,
+        ))
+        .await
+        .expect("start response");
+    assert_eq!(json_body(started).await["ok"], true);
+
+    let printed = router
+        .oneshot(request(
+            "POST",
+            "/v1/mobile/rps/batch/print",
+            &token,
+            r#"{"gross_qty":2.5,"unit":"kg"}"#,
+        ))
+        .await
+        .expect("print response");
+    let status = printed.status();
+    let body = json_body(printed).await;
+
+    assert_eq!(status, StatusCode::FAILED_DEPENDENCY);
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["error"], "submit_failed");
+    assert!(
+        body["detail"]
+            .as_str()
+            .unwrap()
+            .contains("NegativeStockError")
+    );
+    assert_eq!(
+        events.lock().unwrap().as_slice(),
+        ["create:2.500", "print", "submit:MAT-STE-ROUTE"]
+    );
+}
+
+#[tokio::test]
 async fn live_rps_batch_print_routes_through_rs_to_driver_when_env_is_set() {
     let driver_url = std::env::var("RPS_LIVE_DRIVER_URL").unwrap_or_default();
     if driver_url.trim().is_empty() {
@@ -418,6 +479,43 @@ impl MaterialReceiptErpPort for FakeErp {
     async fn submit_stock_entry_draft(&self, name: &str) -> Result<(), GscalePortError> {
         self.events.lock().unwrap().push(format!("submit:{name}"));
         Ok(())
+    }
+
+    async fn delete_stock_entry_draft(&self, name: &str) -> Result<(), GscalePortError> {
+        self.events.lock().unwrap().push(format!("delete:{name}"));
+        Ok(())
+    }
+}
+
+struct FailingSubmitErp {
+    events: Arc<Mutex<Vec<String>>>,
+}
+
+#[async_trait]
+impl MaterialReceiptErpPort for FailingSubmitErp {
+    async fn create_material_receipt_draft(
+        &self,
+        input: CreateMaterialReceiptDraftInput,
+    ) -> Result<MaterialReceiptDraft, GscalePortError> {
+        self.events
+            .lock()
+            .unwrap()
+            .push(format!("create:{:.3}", input.qty));
+        Ok(MaterialReceiptDraft {
+            name: "MAT-STE-ROUTE".to_string(),
+            item_code: input.item_code,
+            warehouse: input.warehouse,
+            qty: input.qty,
+            uom: "Kg".to_string(),
+            barcode: input.barcode,
+        })
+    }
+
+    async fn submit_stock_entry_draft(&self, name: &str) -> Result<(), GscalePortError> {
+        self.events.lock().unwrap().push(format!("submit:{name}"));
+        Err(GscalePortError::ErpWrite(
+            "NegativeStockError: insufficient stock".to_string(),
+        ))
     }
 
     async fn delete_stock_entry_draft(&self, name: &str) -> Result<(), GscalePortError> {
