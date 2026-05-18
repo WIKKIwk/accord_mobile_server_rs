@@ -6,7 +6,8 @@ use tower_http::trace::TraceLayer;
 
 use crate::app::AppState;
 use crate::http::handlers::{
-    admin, auth, customer, gscale, notifications, profile, push, stock_entry, supplier, werka,
+    admin, auth, customer, gscale, notifications, profile, push, rps_batch, stock_entry, supplier,
+    werka,
 };
 
 pub fn build_router(state: AppState) -> Router {
@@ -23,6 +24,9 @@ pub fn build_router(state: AppState) -> Router {
             "/v1/mobile/gscale/material-receipt/print",
             any(gscale::material_receipt_print),
         )
+        .route("/v1/mobile/rps/batch/start", any(rps_batch::start))
+        .route("/v1/mobile/rps/batch/state", any(rps_batch::state))
+        .route("/v1/mobile/rps/batch/stop", any(rps_batch::stop))
         .route("/v1/mobile/stock-entry/lookup", any(stock_entry::lookup))
         .route("/v1/mobile/customer/summary", any(customer::summary))
         .route("/v1/mobile/customer/history", any(customer::history))

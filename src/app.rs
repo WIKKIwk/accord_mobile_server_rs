@@ -10,6 +10,7 @@ use crate::core::profile::ports::ProfileStorePort;
 use crate::core::profile::service::ProfileService;
 use crate::core::push::ports::PushTokenStorePort;
 use crate::core::push::service::PushService;
+use crate::core::rps_batch::{RpsBatchLmdbStore, RpsBatchService};
 use crate::core::session::manager::SessionManager;
 use crate::core::werka::service::WerkaService;
 use crate::erpdb::reader::DirectDbReader;
@@ -30,6 +31,7 @@ pub struct AppState {
     pub profiles: ProfileService,
     pub push: PushService,
     pub gscale: GscaleService,
+    pub rps_batch: RpsBatchService,
     pub werka: WerkaService,
     pub sessions: SessionManager,
 }
@@ -46,6 +48,7 @@ impl AppState {
         let mut profiles = ProfileService::new(config.erp_url.clone()).with_store(profile_store);
         let push = PushService::new(push_token_store.clone())
             .with_sender(discover_push_sender(push_token_store));
+        let rps_batch = RpsBatchService::new(Arc::new(build_rps_batch_store()));
         let mut gscale = GscaleService::new().with_driver(Arc::new(RpsDriverClient::new(
             config.erp_timeout,
             std::env::var("RP_SCALE_DRIVER_URL").unwrap_or_default(),
@@ -165,6 +168,7 @@ impl AppState {
             profiles,
             push,
             gscale,
+            rps_batch,
             werka,
             sessions,
         }
@@ -347,6 +351,31 @@ fn admin_supplier_lmdb_path(config: &AppConfig) -> std::path::PathBuf {
         "MOBILE_API_ADMIN_SUPPLIER_LMDB_PATH",
         &config.admin_supplier_store_path,
         "data/mobile_admin_suppliers.lmdb",
+    )
+}
+
+fn build_rps_batch_store() -> RpsBatchLmdbStore {
+    let lmdb_path = rps_batch_lmdb_path();
+    match RpsBatchLmdbStore::open(
+        lmdb_path.clone(),
+        local_lmdb_map_size_bytes("MOBILE_API_RPS_BATCH_LMDB_MAP_SIZE_MB"),
+    ) {
+        Ok(store) => {
+            tracing::info!(
+                path = %lmdb_path.display(),
+                "LMDB RPS batch store enabled"
+            );
+            store
+        }
+        Err(error) => panic!("LMDB RPS batch store unavailable: {error}"),
+    }
+}
+
+fn rps_batch_lmdb_path() -> std::path::PathBuf {
+    lmdb_path(
+        "MOBILE_API_RPS_BATCH_LMDB_PATH",
+        std::path::Path::new("data/mobile_rps_batches.json"),
+        "data/mobile_rps_batches.lmdb",
     )
 }
 

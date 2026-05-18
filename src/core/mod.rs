@@ -4,5 +4,6 @@ pub mod customer;
 pub mod gscale;
 pub mod profile;
 pub mod push;
+pub mod rps_batch;
 pub mod session;
 pub mod werka;

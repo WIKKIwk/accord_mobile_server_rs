@@ -95,6 +95,81 @@ async fn material_receipt_print_runs_rs_transaction_flow() {
     );
 }
 
+#[tokio::test]
+async fn rps_batch_start_state_stop_is_persisted_by_rs() {
+    let state = test_state();
+    let token = session(&state, PrincipalRole::Werka).await;
+    let router = build_router(state);
+
+    let started = router
+        .clone()
+        .oneshot(request(
+            "POST",
+            "/v1/mobile/rps/batch/start",
+            &token,
+            r#"{
+                "client_batch_id":"batch-1",
+                "driver_url":"http://127.0.0.1:39117",
+                "item_code":"ITEM-1",
+                "item_name":"Green Tea",
+                "warehouse":"Stores - A",
+                "printer":"godex",
+                "print_mode":"label",
+                "quantity_source":"scale",
+                "tare_enabled":true,
+                "tare_kg":0.78
+            }"#,
+        ))
+        .await
+        .expect("start response");
+    let started_body = json_body(started).await;
+
+    assert_eq!(started_body["ok"], true);
+    assert_eq!(started_body["batch"]["active"], true);
+    assert_eq!(started_body["batch"]["id"], "batch-1");
+    assert_eq!(started_body["batch"]["item_code"], "ITEM-1");
+    assert_eq!(started_body["batch"]["warehouse"], "Stores - A");
+    assert_eq!(started_body["batch"]["tare_kg"], 0.78);
+
+    let current = router
+        .clone()
+        .oneshot(request("GET", "/v1/mobile/rps/batch/state", &token, ""))
+        .await
+        .expect("state response");
+    let current_body = json_body(current).await;
+
+    assert_eq!(current_body["batch"]["active"], true);
+    assert_eq!(current_body["batch"]["item_name"], "Green Tea");
+
+    let stopped = router
+        .oneshot(request("POST", "/v1/mobile/rps/batch/stop", &token, ""))
+        .await
+        .expect("stop response");
+    let stopped_body = json_body(stopped).await;
+
+    assert_eq!(stopped_body["batch"]["active"], false);
+    assert_eq!(stopped_body["batch"]["item_code"], "ITEM-1");
+}
+
+#[tokio::test]
+async fn rps_batch_start_requires_item_and_warehouse() {
+    let state = test_state();
+    let token = session(&state, PrincipalRole::Werka).await;
+    let response = build_router(state)
+        .oneshot(request(
+            "POST",
+            "/v1/mobile/rps/batch/start",
+            &token,
+            r#"{"item_code":"ITEM-1"}"#,
+        ))
+        .await
+        .expect("response");
+    let body = json_body(response).await;
+
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["error"], "invalid_input");
+}
+
 fn test_state() -> AppState {
     let mut state = AppState::new(AppConfig {
         bind_addr: "127.0.0.1:8081".parse().expect("addr"),
