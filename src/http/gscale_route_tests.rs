@@ -152,6 +152,83 @@ async fn rps_batch_start_state_stop_is_persisted_by_rs() {
 }
 
 #[tokio::test]
+async fn rps_batch_print_uses_active_rs_batch_and_transaction_flow() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut state = test_state();
+    state.gscale = GscaleService::new()
+        .with_erp(Arc::new(FakeErp {
+            events: events.clone(),
+        }))
+        .with_driver(Arc::new(FakeDriver {
+            events: events.clone(),
+        }));
+    let token = session(&state, PrincipalRole::Werka).await;
+    let router = build_router(state);
+
+    let _ = router
+        .clone()
+        .oneshot(request(
+            "POST",
+            "/v1/mobile/rps/batch/start",
+            &token,
+            r#"{
+                "client_batch_id":"batch-print-1",
+                "driver_url":"http://127.0.0.1:39117",
+                "item_code":"ITEM-1",
+                "item_name":"Green Tea",
+                "warehouse":"Stores - A",
+                "printer":"zebra",
+                "print_mode":"rfid",
+                "tare_enabled":true,
+                "tare_kg":0.78
+            }"#,
+        ))
+        .await
+        .expect("start response");
+
+    let printed = router
+        .oneshot(request(
+            "POST",
+            "/v1/mobile/rps/batch/print",
+            &token,
+            r#"{"gross_qty":2.5,"unit":"kg"}"#,
+        ))
+        .await
+        .expect("print response");
+    let body = json_body(printed).await;
+
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["status"], "submitted");
+    assert_eq!(body["item_code"], "ITEM-1");
+    assert_eq!(body["warehouse"], "Stores - A");
+    assert_eq!(body["gross_qty"], 2.5);
+    assert_eq!(body["qty"], 1.72);
+    assert_eq!(
+        events.lock().unwrap().as_slice(),
+        ["create:1.720", "print", "submit:MAT-STE-ROUTE"]
+    );
+}
+
+#[tokio::test]
+async fn rps_batch_print_requires_active_batch() {
+    let state = test_state();
+    let token = session(&state, PrincipalRole::Werka).await;
+    let response = build_router(state)
+        .oneshot(request(
+            "POST",
+            "/v1/mobile/rps/batch/print",
+            &token,
+            r#"{"gross_qty":2.5}"#,
+        ))
+        .await
+        .expect("response");
+    let body = json_body(response).await;
+
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["error"], "batch_not_active");
+}
+
+#[tokio::test]
 async fn rps_batch_start_requires_item_and_warehouse() {
     let state = test_state();
     let token = session(&state, PrincipalRole::Werka).await;

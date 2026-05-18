@@ -27,6 +27,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/mobile/rps/batch/start", any(rps_batch::start))
         .route("/v1/mobile/rps/batch/state", any(rps_batch::state))
         .route("/v1/mobile/rps/batch/stop", any(rps_batch::stop))
+        .route("/v1/mobile/rps/batch/print", any(rps_batch::print))
         .route("/v1/mobile/stock-entry/lookup", any(stock_entry::lookup))
         .route("/v1/mobile/customer/summary", any(customer::summary))
         .route("/v1/mobile/customer/history", any(customer::history))

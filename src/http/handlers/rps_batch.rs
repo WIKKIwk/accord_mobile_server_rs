@@ -6,7 +6,8 @@ use serde::Serialize;
 
 use crate::app::AppState;
 use crate::core::auth::models::{Principal, PrincipalRole};
-use crate::core::rps_batch::{RpsBatchServiceError, RpsBatchStartRequest};
+use crate::core::gscale::GscaleServiceError;
+use crate::core::rps_batch::{RpsBatchPrintRequest, RpsBatchServiceError, RpsBatchStartRequest};
 use crate::http::handlers::auth::bearer_token;
 
 pub async fn start(
@@ -69,6 +70,33 @@ pub async fn stop(
     ))
 }
 
+pub async fn print(
+    State(state): State<AppState>,
+    method: Method,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<RpsBatchErrorResponse>)> {
+    if method != Method::POST {
+        return Err(method_not_allowed());
+    }
+    let principal = authenticated_principal(&state, &headers).await?;
+    let request: RpsBatchPrintRequest =
+        serde_json::from_slice(&body).map_err(|_| bad_request("invalid_json", "invalid json"))?;
+    let material_request = state
+        .rps_batch
+        .material_receipt_request(&principal, request)
+        .await
+        .map_err(batch_error)?;
+    let response = state
+        .gscale
+        .print_material_receipt(material_request)
+        .await
+        .map_err(gscale_error)?;
+    Ok(Json(
+        serde_json::to_value(response).unwrap_or_else(|_| serde_json::json!({"ok": false})),
+    ))
+}
+
 async fn authenticated_principal(
     state: &AppState,
     headers: &HeaderMap,
@@ -88,7 +116,28 @@ async fn authenticated_principal(
 fn batch_error(error: RpsBatchServiceError) -> (StatusCode, Json<RpsBatchErrorResponse>) {
     let status = match error {
         RpsBatchServiceError::InvalidInput(_) => StatusCode::BAD_REQUEST,
+        RpsBatchServiceError::BatchNotActive => StatusCode::CONFLICT,
         RpsBatchServiceError::StoreFailed => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    (
+        status,
+        Json(RpsBatchErrorResponse {
+            ok: false,
+            error: error.code(),
+            detail: error.to_string(),
+        }),
+    )
+}
+
+fn gscale_error(error: GscaleServiceError) -> (StatusCode, Json<RpsBatchErrorResponse>) {
+    let status = match error {
+        GscaleServiceError::InvalidInput(_) => StatusCode::BAD_REQUEST,
+        GscaleServiceError::NotConfigured(_) => StatusCode::SERVICE_UNAVAILABLE,
+        GscaleServiceError::EpcGenerationFailed => StatusCode::INTERNAL_SERVER_ERROR,
+        GscaleServiceError::DuplicateBarcodeRetriesExhausted { .. } => StatusCode::CONFLICT,
+        GscaleServiceError::ErpWrite(_) => StatusCode::BAD_GATEWAY,
+        GscaleServiceError::PrintFailed { .. } => StatusCode::BAD_GATEWAY,
+        GscaleServiceError::SubmitFailed(_) => StatusCode::BAD_GATEWAY,
     };
     (
         status,
@@ -155,6 +204,7 @@ impl RpsBatchServiceError {
     fn code(&self) -> &'static str {
         match self {
             Self::InvalidInput(_) => "invalid_input",
+            Self::BatchNotActive => "batch_not_active",
             Self::StoreFailed => "batch_store_failed",
         }
     }

@@ -2,7 +2,11 @@ use std::sync::Arc;
 
 use crate::core::auth::models::{Principal, PrincipalRole};
 
-use super::models::{RpsBatchResponse, RpsBatchSession, RpsBatchStartRequest};
+use crate::core::gscale::models::MaterialReceiptPrintRequest;
+
+use super::models::{
+    RpsBatchPrintRequest, RpsBatchResponse, RpsBatchSession, RpsBatchStartRequest,
+};
 use super::ports::{RpsBatchStoreError, RpsBatchStorePort};
 
 #[derive(Clone)]
@@ -54,6 +58,21 @@ impl RpsBatchService {
         batch.updated_at = now_string();
         self.store.put(batch.clone()).await?;
         Ok(RpsBatchResponse::new(batch))
+    }
+
+    pub async fn material_receipt_request(
+        &self,
+        principal: &Principal,
+        request: RpsBatchPrintRequest,
+    ) -> Result<MaterialReceiptPrintRequest, RpsBatchServiceError> {
+        let owner = BatchOwner::from_principal(principal);
+        let Some(batch) = self.store.get(&owner.key).await? else {
+            return Err(RpsBatchServiceError::BatchNotActive);
+        };
+        if !batch.active {
+            return Err(RpsBatchServiceError::BatchNotActive);
+        }
+        Ok(batch.material_receipt_request(request))
     }
 }
 
@@ -172,6 +191,8 @@ fn positive_or_zero(value: f64) -> f64 {
 pub enum RpsBatchServiceError {
     #[error("invalid input: {0}")]
     InvalidInput(String),
+    #[error("batch not active")]
+    BatchNotActive,
     #[error("store failed")]
     StoreFailed,
 }

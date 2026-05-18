@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::core::gscale::models::MaterialReceiptPrintRequest;
+
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 pub struct RpsBatchStartRequest {
     #[serde(default)]
@@ -69,5 +71,44 @@ pub struct RpsBatchResponse {
 impl RpsBatchResponse {
     pub fn new(batch: RpsBatchSession) -> Self {
         Self { ok: true, batch }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct RpsBatchPrintRequest {
+    #[serde(default)]
+    pub gross_qty: f64,
+    #[serde(default)]
+    pub unit: String,
+    #[serde(default)]
+    pub driver_url: String,
+}
+
+impl RpsBatchSession {
+    pub fn material_receipt_request(
+        &self,
+        request: RpsBatchPrintRequest,
+    ) -> MaterialReceiptPrintRequest {
+        MaterialReceiptPrintRequest {
+            driver_url: first_non_empty(&request.driver_url, &self.driver_url),
+            item_code: self.item_code.clone(),
+            item_name: self.item_name.clone(),
+            warehouse: self.warehouse.clone(),
+            printer: self.printer.clone(),
+            print_mode: self.print_mode.clone(),
+            gross_qty: request.gross_qty,
+            unit: first_non_empty(&request.unit, "kg"),
+            tare_enabled: self.tare_enabled,
+            tare_kg: self.tare_kg,
+        }
+    }
+}
+
+fn first_non_empty(value: &str, default: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() {
+        default.trim().to_string()
+    } else {
+        value.to_string()
     }
 }
