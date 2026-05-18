@@ -1,5 +1,5 @@
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use axum::body::{Body, to_bytes};
@@ -202,19 +202,87 @@ async fn rps_batch_print_uses_active_rs_batch_and_transaction_flow() {
     let body = json_body(printed).await;
 
     assert_eq!(body["ok"], true);
-    assert_eq!(body["status"], "submitted");
+    assert_eq!(body["status"], "printed");
     assert_eq!(body["item_code"], "ITEM-1");
     assert_eq!(body["warehouse"], "Stores - A");
     assert_eq!(body["gross_qty"], 2.5);
     assert_eq!(body["qty"], 1.72);
+    tokio::time::sleep(Duration::from_millis(25)).await;
     assert_eq!(
         events.lock().unwrap().as_slice(),
-        ["create:1.720", "print", "submit:MAT-STE-ROUTE"]
+        ["print", "create:1.720", "submit:MAT-STE-ROUTE"]
     );
 }
 
 #[tokio::test]
-async fn rps_batch_print_preserves_erp_failure_detail_without_502() {
+async fn rps_batch_print_returns_after_driver_without_waiting_for_erp_submit() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut state = test_state();
+    state.gscale = GscaleService::new()
+        .with_erp(Arc::new(SlowErp {
+            events: events.clone(),
+            delay: Duration::from_millis(800),
+        }))
+        .with_driver(Arc::new(FakeDriver {
+            events: events.clone(),
+        }))
+        .with_epc_source(Arc::new(FixedEpc("FAST-EPC-1")));
+    let token = session(&state, PrincipalRole::Werka).await;
+    let router = build_router(state);
+
+    let started = router
+        .clone()
+        .oneshot(request(
+            "POST",
+            "/v1/mobile/rps/batch/start",
+            &token,
+            r#"{
+                "client_batch_id":"batch-fast-print-1",
+                "driver_url":"http://127.0.0.1:39117",
+                "item_code":"ITEM-1",
+                "item_name":"Green Tea",
+                "warehouse":"Stores - A",
+                "printer":"godex",
+                "print_mode":"label"
+            }"#,
+        ))
+        .await
+        .expect("start response");
+    assert_eq!(json_body(started).await["ok"], true);
+
+    let started_at = Instant::now();
+    let printed = router
+        .oneshot(request(
+            "POST",
+            "/v1/mobile/rps/batch/print",
+            &token,
+            r#"{"gross_qty":2.5,"unit":"kg"}"#,
+        ))
+        .await
+        .expect("print response");
+    let elapsed = started_at.elapsed();
+    let body = json_body(printed).await;
+
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "RPS print response took {elapsed:?}"
+    );
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["status"], "printed");
+    assert_eq!(body["epc"], "FAST-EPC-1");
+    assert_eq!(body["item_code"], "ITEM-1");
+    assert_eq!(body["warehouse"], "Stores - A");
+    assert_eq!(events.lock().unwrap().as_slice(), ["print"]);
+
+    tokio::time::sleep(Duration::from_millis(900)).await;
+    assert_eq!(
+        events.lock().unwrap().as_slice(),
+        ["print", "create:2.500", "submit:MAT-STE-ROUTE"]
+    );
+}
+
+#[tokio::test]
+async fn rps_batch_print_returns_printed_before_late_erp_failure() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let mut state = test_state();
     state.gscale = GscaleService::new()
@@ -259,18 +327,16 @@ async fn rps_batch_print_preserves_erp_failure_detail_without_502() {
     let status = printed.status();
     let body = json_body(printed).await;
 
-    assert_eq!(status, StatusCode::FAILED_DEPENDENCY);
-    assert_eq!(body["ok"], false);
-    assert_eq!(body["error"], "submit_failed");
-    assert!(
-        body["detail"]
-            .as_str()
-            .unwrap()
-            .contains("NegativeStockError")
-    );
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["status"], "printed");
+    assert_eq!(body["item_code"], "ABCD Family");
+    assert_eq!(events.lock().unwrap().as_slice(), ["print"]);
+
+    tokio::time::sleep(Duration::from_millis(25)).await;
     assert_eq!(
         events.lock().unwrap().as_slice(),
-        ["create:2.500", "print", "submit:MAT-STE-ROUTE"]
+        ["print", "create:2.500", "submit:MAT-STE-ROUTE"]
     );
 }
 
@@ -335,13 +401,14 @@ async fn live_rps_batch_print_routes_through_rs_to_driver_when_env_is_set() {
 
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["ok"], true);
-    assert_eq!(body["status"], "submitted");
+    assert_eq!(body["status"], "printed");
     assert_eq!(body["item_code"], "TEST-GODEX");
     assert_eq!(body["warehouse"], "5070 Lab");
     assert_eq!(body["printer"], "godex");
     assert_eq!(body["print_mode"], "label");
     assert_eq!(body["printer_status"], "sent");
     assert_eq!(body["gross_qty"], 2.5);
+    tokio::time::sleep(Duration::from_millis(25)).await;
     assert_eq!(
         events.lock().unwrap().as_slice(),
         ["create:2.500", "submit:MAT-STE-ROUTE"]
@@ -516,6 +583,43 @@ impl MaterialReceiptErpPort for FailingSubmitErp {
         Err(GscalePortError::ErpWrite(
             "NegativeStockError: insufficient stock".to_string(),
         ))
+    }
+
+    async fn delete_stock_entry_draft(&self, name: &str) -> Result<(), GscalePortError> {
+        self.events.lock().unwrap().push(format!("delete:{name}"));
+        Ok(())
+    }
+}
+
+struct SlowErp {
+    events: Arc<Mutex<Vec<String>>>,
+    delay: Duration,
+}
+
+#[async_trait]
+impl MaterialReceiptErpPort for SlowErp {
+    async fn create_material_receipt_draft(
+        &self,
+        input: CreateMaterialReceiptDraftInput,
+    ) -> Result<MaterialReceiptDraft, GscalePortError> {
+        tokio::time::sleep(self.delay).await;
+        self.events
+            .lock()
+            .unwrap()
+            .push(format!("create:{:.3}", input.qty));
+        Ok(MaterialReceiptDraft {
+            name: "MAT-STE-ROUTE".to_string(),
+            item_code: input.item_code,
+            warehouse: input.warehouse,
+            qty: input.qty,
+            uom: "Kg".to_string(),
+            barcode: input.barcode,
+        })
+    }
+
+    async fn submit_stock_entry_draft(&self, name: &str) -> Result<(), GscalePortError> {
+        self.events.lock().unwrap().push(format!("submit:{name}"));
+        Ok(())
     }
 
     async fn delete_stock_entry_draft(&self, name: &str) -> Result<(), GscalePortError> {

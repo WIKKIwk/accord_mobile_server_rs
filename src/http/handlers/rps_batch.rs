@@ -89,9 +89,19 @@ pub async fn print(
         .map_err(batch_error)?;
     let response = state
         .gscale
-        .print_material_receipt(material_request)
+        .print_material_receipt_driver_first(material_request.clone())
         .await
         .map_err(gscale_error)?;
+    let gscale = state.gscale.clone();
+    let epc = response.epc.clone();
+    tokio::spawn(async move {
+        if let Err(error) = gscale
+            .record_printed_material_receipt(material_request, epc)
+            .await
+        {
+            tracing::warn!(%error, "RPS batch ERP record failed after driver print");
+        }
+    });
     Ok(Json(
         serde_json::to_value(response).unwrap_or_else(|_| serde_json::json!({"ok": false})),
     ))

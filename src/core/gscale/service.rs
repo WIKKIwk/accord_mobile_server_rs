@@ -100,6 +100,71 @@ impl GscaleService {
         })
     }
 
+    pub async fn print_material_receipt_driver_first(
+        &self,
+        request: MaterialReceiptPrintRequest,
+    ) -> Result<MaterialReceiptPrintResponse, GscaleServiceError> {
+        self.erp.as_ref().ok_or_else(|| {
+            GscaleServiceError::NotConfigured("material receipt erp is not configured".to_string())
+        })?;
+        let driver = self.driver.as_ref().ok_or_else(|| {
+            GscaleServiceError::NotConfigured("scale driver is not configured".to_string())
+        })?;
+        let job = NormalizedMaterialReceiptJob::from_request(request)?;
+        let epc = self.next_epc()?;
+        let print = driver
+            .print_material_receipt(job.driver_request(&epc))
+            .await;
+        let print = match print {
+            Ok(print) if print_done(&print) => print,
+            Ok(print) => {
+                return Err(GscaleServiceError::PrintFailed {
+                    detail: print_error_detail(&print),
+                    delete_error: None,
+                });
+            }
+            Err(error) => {
+                return Err(GscaleServiceError::PrintFailed {
+                    detail: error.message(),
+                    delete_error: None,
+                });
+            }
+        };
+
+        Ok(MaterialReceiptPrintResponse {
+            ok: true,
+            status: "printed".to_string(),
+            draft_name: String::new(),
+            epc,
+            item_code: job.item_code,
+            item_name: job.item_name,
+            warehouse: job.warehouse,
+            qty: job.net_qty,
+            net_qty: job.net_qty,
+            gross_qty: job.gross_qty,
+            unit: job.unit,
+            printer: print.printer,
+            print_mode: print.mode,
+            printer_status: print.printer_status,
+        })
+    }
+
+    pub async fn record_printed_material_receipt(
+        &self,
+        request: MaterialReceiptPrintRequest,
+        epc: String,
+    ) -> Result<(), GscaleServiceError> {
+        let erp = self.erp.as_ref().ok_or_else(|| {
+            GscaleServiceError::NotConfigured("material receipt erp is not configured".to_string())
+        })?;
+        let job = NormalizedMaterialReceiptJob::from_request(request)?;
+        let draft = self.create_draft_with_epc(erp.as_ref(), &job, epc).await?;
+        erp.submit_stock_entry_draft(&draft.name)
+            .await
+            .map_err(|error| GscaleServiceError::SubmitFailed(error.message()))?;
+        Ok(())
+    }
+
     async fn create_draft_with_fresh_epc(
         &self,
         erp: &dyn MaterialReceiptErpPort,
@@ -108,29 +173,45 @@ impl GscaleService {
         let mut last_error = None;
         let mut last_epc = String::new();
         for _ in 0..MAX_DUPLICATE_BARCODE_RETRIES {
-            let epc = self.epc.next_epc().trim().to_ascii_uppercase();
-            if epc.is_empty() {
-                return Err(GscaleServiceError::EpcGenerationFailed);
-            }
+            let epc = self.next_epc()?;
             last_epc = epc.clone();
-            let input = CreateMaterialReceiptDraftInput {
-                item_code: job.item_code.clone(),
-                warehouse: job.warehouse.clone(),
-                qty: job.net_qty,
-                barcode: epc,
-            };
-            match erp.create_material_receipt_draft(input).await {
+            match self.create_draft_with_epc(erp, job, epc).await {
                 Ok(draft) => return Ok(draft),
-                Err(error) if is_duplicate_barcode_error(&error.message()) => {
-                    last_error = Some(error.message());
+                Err(error) if is_duplicate_barcode_error(&error.to_string()) => {
+                    last_error = Some(error.to_string());
                 }
-                Err(error) => return Err(GscaleServiceError::ErpWrite(error.message())),
+                Err(error) => return Err(error),
             }
         }
         Err(GscaleServiceError::DuplicateBarcodeRetriesExhausted {
             epc: last_epc,
             detail: last_error.unwrap_or_else(|| "duplicate retry exhausted".to_string()),
         })
+    }
+
+    async fn create_draft_with_epc(
+        &self,
+        erp: &dyn MaterialReceiptErpPort,
+        job: &NormalizedMaterialReceiptJob,
+        epc: String,
+    ) -> Result<super::models::MaterialReceiptDraft, GscaleServiceError> {
+        let input = CreateMaterialReceiptDraftInput {
+            item_code: job.item_code.clone(),
+            warehouse: job.warehouse.clone(),
+            qty: job.net_qty,
+            barcode: epc,
+        };
+        erp.create_material_receipt_draft(input)
+            .await
+            .map_err(|error| GscaleServiceError::ErpWrite(error.message()))
+    }
+
+    fn next_epc(&self) -> Result<String, GscaleServiceError> {
+        let epc = self.epc.next_epc().trim().to_ascii_uppercase();
+        if epc.is_empty() {
+            return Err(GscaleServiceError::EpcGenerationFailed);
+        }
+        Ok(epc)
     }
 
     async fn delete_after_print_failure(
