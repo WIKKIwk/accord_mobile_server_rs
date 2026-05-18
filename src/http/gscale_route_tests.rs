@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use axum::body::{Body, to_bytes};
@@ -14,8 +15,11 @@ use crate::core::gscale::models::{
     CreateMaterialReceiptDraftInput, MaterialReceiptDraft, ScaleDriverPrintRequest,
     ScaleDriverPrintResponse,
 };
-use crate::core::gscale::ports::{GscalePortError, MaterialReceiptErpPort, ScaleDriverPort};
+use crate::core::gscale::ports::{
+    EpcSource, GscalePortError, MaterialReceiptErpPort, ScaleDriverPort,
+};
 use crate::core::session::manager::SessionManager;
+use crate::rps::RpsDriverClient;
 
 #[tokio::test]
 async fn material_receipt_print_requires_auth() {
@@ -210,6 +214,80 @@ async fn rps_batch_print_uses_active_rs_batch_and_transaction_flow() {
 }
 
 #[tokio::test]
+async fn live_rps_batch_print_routes_through_rs_to_driver_when_env_is_set() {
+    let driver_url = std::env::var("RPS_LIVE_DRIVER_URL").unwrap_or_default();
+    if driver_url.trim().is_empty() {
+        eprintln!("skipping live RPS driver test; set RPS_LIVE_DRIVER_URL");
+        return;
+    }
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut state = test_state();
+    state.gscale = GscaleService::new()
+        .with_erp(Arc::new(FakeErp {
+            events: events.clone(),
+        }))
+        .with_driver(Arc::new(RpsDriverClient::new(
+            Duration::from_secs(15),
+            driver_url.clone(),
+        )))
+        .with_epc_source(Arc::new(FixedEpc("300833B2DDD90140000000A1")));
+    let token = session(&state, PrincipalRole::Werka).await;
+    let router = build_router(state);
+
+    let started = router
+        .clone()
+        .oneshot(request(
+            "POST",
+            "/v1/mobile/rps/batch/start",
+            &token,
+            &format!(
+                r#"{{
+                    "client_batch_id":"live-rps-driver-test",
+                    "driver_url":"{}",
+                    "item_code":"TEST-GODEX",
+                    "item_name":"GoDEX RS Route Test",
+                    "warehouse":"5070 Lab",
+                    "printer":"godex",
+                    "print_mode":"label",
+                    "quantity_source":"scale"
+                }}"#,
+                driver_url.trim().trim_end_matches('/')
+            ),
+        ))
+        .await
+        .expect("start response");
+    let started_body = json_body(started).await;
+    assert_eq!(started_body["ok"], true);
+
+    let printed = router
+        .oneshot(request(
+            "POST",
+            "/v1/mobile/rps/batch/print",
+            &token,
+            r#"{"gross_qty":2.5,"unit":"kg"}"#,
+        ))
+        .await
+        .expect("print response");
+    let status = printed.status();
+    let body = json_body(printed).await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["status"], "submitted");
+    assert_eq!(body["item_code"], "TEST-GODEX");
+    assert_eq!(body["warehouse"], "5070 Lab");
+    assert_eq!(body["printer"], "godex");
+    assert_eq!(body["print_mode"], "label");
+    assert_eq!(body["printer_status"], "sent");
+    assert_eq!(body["gross_qty"], 2.5);
+    assert_eq!(
+        events.lock().unwrap().as_slice(),
+        ["create:2.500", "submit:MAT-STE-ROUTE"]
+    );
+}
+
+#[tokio::test]
 async fn rps_batch_print_requires_active_batch() {
     let state = test_state();
     let token = session(&state, PrincipalRole::Werka).await;
@@ -368,5 +446,13 @@ impl ScaleDriverPort for FakeDriver {
             printer_status: "OK".to_string(),
             ..ScaleDriverPrintResponse::default()
         })
+    }
+}
+
+struct FixedEpc(&'static str);
+
+impl EpcSource for FixedEpc {
+    fn next_epc(&self) -> String {
+        self.0.to_string()
     }
 }
