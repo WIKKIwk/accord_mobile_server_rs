@@ -5,6 +5,7 @@ use crate::config::{AppConfig, DotEnvPersister};
 use crate::core::admin::service::AdminService;
 use crate::core::auth::service::AuthService;
 use crate::core::customer::service::CustomerService;
+use crate::core::gscale::GscaleService;
 use crate::core::profile::ports::ProfileStorePort;
 use crate::core::profile::service::ProfileService;
 use crate::core::push::ports::PushTokenStorePort;
@@ -14,6 +15,7 @@ use crate::core::werka::service::WerkaService;
 use crate::erpdb::reader::DirectDbReader;
 use crate::erpnext::client::ErpnextClient;
 use crate::fcm::discover_push_sender;
+use crate::rps::RpsDriverClient;
 use crate::store::admin_state_store::AdminSupplierStateBackend;
 use crate::store::profile_store::{LmdbProfileStore, ProfileStore};
 use crate::store::push_token_store::{LmdbPushTokenStore, PushTokenStore};
@@ -27,6 +29,7 @@ pub struct AppState {
     pub customer: CustomerService,
     pub profiles: ProfileService,
     pub push: PushService,
+    pub gscale: GscaleService,
     pub werka: WerkaService,
     pub sessions: SessionManager,
 }
@@ -43,6 +46,10 @@ impl AppState {
         let mut profiles = ProfileService::new(config.erp_url.clone()).with_store(profile_store);
         let push = PushService::new(push_token_store.clone())
             .with_sender(discover_push_sender(push_token_store));
+        let mut gscale = GscaleService::new().with_driver(Arc::new(RpsDriverClient::new(
+            config.erp_timeout,
+            std::env::var("RP_SCALE_DRIVER_URL").unwrap_or_default(),
+        )));
         let mut werka = WerkaService::new();
         let sessions = match local_store_backend("MOBILE_API_SESSION_STORE_BACKEND") {
             LocalStoreBackend::Lmdb => {
@@ -110,6 +117,7 @@ impl AppState {
             auth = auth.with_customer_dependencies(client.clone(), admin_state_store.clone());
             customer = customer.with_delivery_port(client.clone());
             profiles = profiles.with_erp_lookup(client.clone());
+            gscale = gscale.with_erp(client.clone());
             werka = werka
                 .with_customer_issue_writer(client.clone())
                 .with_unannounced_writer(client.clone())
@@ -156,6 +164,7 @@ impl AppState {
             customer,
             profiles,
             push,
+            gscale,
             werka,
             sessions,
         }

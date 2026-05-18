@@ -9,6 +9,7 @@ mod fcm;
 #[cfg(test)]
 mod fcm_tests;
 mod http;
+mod rps;
 mod store;
 
 use crate::app::AppState;

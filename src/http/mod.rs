@@ -7,6 +7,8 @@ mod admin_route_tests;
 #[cfg(test)]
 mod customer_route_tests;
 #[cfg(test)]
+mod gscale_route_tests;
+#[cfg(test)]
 mod notification_comment_route_tests;
 #[cfg(test)]
 mod notification_detail_route_tests;
