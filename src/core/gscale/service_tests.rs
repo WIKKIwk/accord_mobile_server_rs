@@ -1,7 +1,9 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use async_trait::async_trait;
+use tokio::sync::Notify;
 
 use super::*;
 use crate::core::gscale::models::{MaterialReceiptDraft, ScaleDriverPrintResponse};
@@ -133,6 +135,72 @@ async fn rejects_small_gross_and_net_qty_before_erp() {
     );
 }
 
+#[tokio::test]
+async fn driver_first_starts_draft_before_slow_driver_finishes_and_submits_after_print_success() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let print_gate = Arc::new(Notify::new());
+    let service = GscaleService::new()
+        .with_erp(Arc::new(FakeErp::new(events.clone())))
+        .with_driver(Arc::new(GatedDriver {
+            events: events.clone(),
+            print_gate: print_gate.clone(),
+        }))
+        .with_epc_source(Arc::new(QueueEpc::new(["EPC-1"])));
+
+    let print_task =
+        tokio::spawn(async move { service.print_material_receipt_driver_first(request()).await });
+
+    wait_for_event(&events, "create:EPC-1:1.720").await;
+    assert!(
+        !events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event == "submit:MAT-STE-001"),
+        "draft must not submit before printer success"
+    );
+
+    print_gate.notify_one();
+    let response = print_task.await.unwrap().unwrap();
+    assert_eq!(response.status, "printed");
+
+    wait_for_event(&events, "submit:MAT-STE-001").await;
+    let events = events.lock().unwrap().clone();
+    let create_pos = events
+        .iter()
+        .position(|event| event == "create:EPC-1:1.720")
+        .unwrap();
+    let print_done_pos = events
+        .iter()
+        .position(|event| event == "print:done:EPC-1")
+        .unwrap();
+    let submit_pos = events
+        .iter()
+        .position(|event| event == "submit:MAT-STE-001")
+        .unwrap();
+    assert!(
+        create_pos < print_done_pos,
+        "ERP draft must start while printer request is still in flight: {events:?}"
+    );
+    assert!(
+        print_done_pos < submit_pos,
+        "ERP submit must wait for printer success: {events:?}"
+    );
+}
+
+async fn wait_for_event(events: &Arc<Mutex<Vec<String>>>, needle: &str) {
+    for _ in 0..50 {
+        if events.lock().unwrap().iter().any(|event| event == needle) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!(
+        "timed out waiting for {needle}; events={:?}",
+        events.lock().unwrap()
+    );
+}
+
 struct QueueEpc {
     values: Mutex<VecDeque<String>>,
 }
@@ -258,6 +326,38 @@ impl ScaleDriverPort for FakeDriver {
             mode: request.print_mode,
             printer_status: self.status.to_string(),
             detail: "printer rejected".to_string(),
+            ..ScaleDriverPrintResponse::default()
+        })
+    }
+}
+
+struct GatedDriver {
+    events: Arc<Mutex<Vec<String>>>,
+    print_gate: Arc<Notify>,
+}
+
+#[async_trait]
+impl ScaleDriverPort for GatedDriver {
+    async fn print_material_receipt(
+        &self,
+        request: ScaleDriverPrintRequest,
+    ) -> Result<ScaleDriverPrintResponse, GscalePortError> {
+        self.events
+            .lock()
+            .unwrap()
+            .push(format!("print:start:{}", request.epc));
+        self.print_gate.notified().await;
+        self.events
+            .lock()
+            .unwrap()
+            .push(format!("print:done:{}", request.epc));
+        Ok(ScaleDriverPrintResponse {
+            ok: true,
+            status: "done".to_string(),
+            epc: request.epc,
+            printer: request.printer,
+            mode: request.print_mode,
+            printer_status: "OK".to_string(),
             ..ScaleDriverPrintResponse::default()
         })
     }

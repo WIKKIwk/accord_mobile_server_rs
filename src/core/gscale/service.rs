@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use tokio::sync::oneshot;
+
 use super::epc::GscaleEpcGenerator;
 use super::models::{
     CreateMaterialReceiptDraftInput, MaterialReceiptPrintRequest, MaterialReceiptPrintResponse,
@@ -104,7 +106,7 @@ impl GscaleService {
         &self,
         request: MaterialReceiptPrintRequest,
     ) -> Result<MaterialReceiptPrintResponse, GscaleServiceError> {
-        self.erp.as_ref().ok_or_else(|| {
+        let erp = self.erp.as_ref().ok_or_else(|| {
             GscaleServiceError::NotConfigured("material receipt erp is not configured".to_string())
         })?;
         let driver = self.driver.as_ref().ok_or_else(|| {
@@ -112,24 +114,34 @@ impl GscaleService {
         })?;
         let job = NormalizedMaterialReceiptJob::from_request(request)?;
         let epc = self.next_epc()?;
+        let (print_result_tx, print_result_rx) = oneshot::channel();
+        tokio::spawn(record_parallel_material_receipt(
+            erp.clone(),
+            job.clone(),
+            epc.clone(),
+            print_result_rx,
+        ));
         let print = driver
             .print_material_receipt(job.driver_request(&epc))
             .await;
         let print = match print {
             Ok(print) if print_done(&print) => print,
             Ok(print) => {
+                let _ = print_result_tx.send(false);
                 return Err(GscaleServiceError::PrintFailed {
                     detail: print_error_detail(&print),
                     delete_error: None,
                 });
             }
             Err(error) => {
+                let _ = print_result_tx.send(false);
                 return Err(GscaleServiceError::PrintFailed {
                     detail: error.message(),
                     delete_error: None,
                 });
             }
         };
+        let _ = print_result_tx.send(true);
 
         Ok(MaterialReceiptPrintResponse {
             ok: true,
@@ -147,22 +159,6 @@ impl GscaleService {
             print_mode: print.mode,
             printer_status: print.printer_status,
         })
-    }
-
-    pub async fn record_printed_material_receipt(
-        &self,
-        request: MaterialReceiptPrintRequest,
-        epc: String,
-    ) -> Result<(), GscaleServiceError> {
-        let erp = self.erp.as_ref().ok_or_else(|| {
-            GscaleServiceError::NotConfigured("material receipt erp is not configured".to_string())
-        })?;
-        let job = NormalizedMaterialReceiptJob::from_request(request)?;
-        let draft = self.create_draft_with_epc(erp.as_ref(), &job, epc).await?;
-        erp.submit_stock_entry_draft(&draft.name)
-            .await
-            .map_err(|error| GscaleServiceError::SubmitFailed(error.message()))?;
-        Ok(())
     }
 
     async fn create_draft_with_fresh_epc(
@@ -195,15 +191,7 @@ impl GscaleService {
         job: &NormalizedMaterialReceiptJob,
         epc: String,
     ) -> Result<super::models::MaterialReceiptDraft, GscaleServiceError> {
-        let input = CreateMaterialReceiptDraftInput {
-            item_code: job.item_code.clone(),
-            warehouse: job.warehouse.clone(),
-            qty: job.net_qty,
-            barcode: epc,
-        };
-        erp.create_material_receipt_draft(input)
-            .await
-            .map_err(|error| GscaleServiceError::ErpWrite(error.message()))
+        create_material_receipt_draft(erp, job, epc).await
     }
 
     fn next_epc(&self) -> Result<String, GscaleServiceError> {
@@ -230,6 +218,53 @@ impl GscaleService {
             delete_error,
         }
     }
+}
+
+async fn record_parallel_material_receipt(
+    erp: Arc<dyn MaterialReceiptErpPort>,
+    job: NormalizedMaterialReceiptJob,
+    epc: String,
+    print_result_rx: oneshot::Receiver<bool>,
+) {
+    if let Err(error) = record_parallel_material_receipt_inner(erp, job, epc, print_result_rx).await
+    {
+        tracing::warn!(%error, "RPS batch ERP record failed after driver print");
+    }
+}
+
+async fn record_parallel_material_receipt_inner(
+    erp: Arc<dyn MaterialReceiptErpPort>,
+    job: NormalizedMaterialReceiptJob,
+    epc: String,
+    print_result_rx: oneshot::Receiver<bool>,
+) -> Result<(), GscaleServiceError> {
+    let draft = create_material_receipt_draft(erp.as_ref(), &job, epc).await?;
+    let print_ok = print_result_rx.await.unwrap_or(false);
+    if !print_ok {
+        erp.delete_stock_entry_draft(&draft.name)
+            .await
+            .map_err(|error| GscaleServiceError::ErpWrite(error.message()))?;
+        return Ok(());
+    }
+    erp.submit_stock_entry_draft(&draft.name)
+        .await
+        .map_err(|error| GscaleServiceError::SubmitFailed(error.message()))
+}
+
+async fn create_material_receipt_draft(
+    erp: &dyn MaterialReceiptErpPort,
+    job: &NormalizedMaterialReceiptJob,
+    epc: String,
+) -> Result<super::models::MaterialReceiptDraft, GscaleServiceError> {
+    let input = CreateMaterialReceiptDraftInput {
+        item_code: job.item_code.clone(),
+        warehouse: job.warehouse.clone(),
+        qty: job.net_qty,
+        barcode: epc,
+    };
+    erp.create_material_receipt_draft(input)
+        .await
+        .map_err(|error| GscaleServiceError::ErpWrite(error.message()))
 }
 
 #[derive(Debug, Clone, PartialEq)]
