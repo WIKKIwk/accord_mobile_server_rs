@@ -25,93 +25,6 @@ fn request() -> MaterialReceiptPrintRequest {
 }
 
 #[tokio::test]
-async fn creates_draft_prints_then_submits_like_gscale() {
-    let events = Arc::new(Mutex::new(Vec::new()));
-    let erp = Arc::new(FakeErp::new(events.clone()));
-    let driver = Arc::new(FakeDriver::done(events.clone()));
-    let service = GscaleService::new()
-        .with_erp(erp.clone())
-        .with_driver(driver.clone())
-        .with_epc_source(Arc::new(QueueEpc::new(["EPC-1"])));
-
-    let response = service.print_material_receipt(request()).await.unwrap();
-
-    assert_eq!(response.status, "submitted");
-    assert_eq!(response.draft_name, "MAT-STE-001");
-    assert_eq!(response.epc, "EPC-1");
-    assert_eq!(response.qty, 1.72);
-    assert_eq!(driver.last().epc, "EPC-1");
-    assert_eq!(driver.last().gross_qty, 2.5);
-    assert_eq!(driver.last().tare_kg, 0.78);
-    assert_eq!(
-        events.lock().unwrap().as_slice(),
-        ["create:EPC-1:1.720", "print:EPC-1", "submit:MAT-STE-001"]
-    );
-}
-
-#[tokio::test]
-async fn deletes_draft_when_driver_fails_before_submit() {
-    let events = Arc::new(Mutex::new(Vec::new()));
-    let erp = Arc::new(FakeErp::new(events.clone()));
-    let driver = Arc::new(FakeDriver::status_error(events.clone()));
-    let service = GscaleService::new()
-        .with_erp(erp)
-        .with_driver(driver)
-        .with_epc_source(Arc::new(QueueEpc::new(["EPC-1"])));
-
-    let error = service.print_material_receipt(request()).await.unwrap_err();
-
-    assert!(matches!(error, GscaleServiceError::PrintFailed { .. }));
-    assert_eq!(
-        events.lock().unwrap().as_slice(),
-        ["create:EPC-1:1.720", "print:EPC-1", "delete:MAT-STE-001"]
-    );
-}
-
-#[tokio::test]
-async fn submit_failure_does_not_delete_already_printed_draft() {
-    let events = Arc::new(Mutex::new(Vec::new()));
-    let mut erp = FakeErp::new(events.clone());
-    erp.submit_error = Some("submit failed".to_string());
-    let service = GscaleService::new()
-        .with_erp(Arc::new(erp))
-        .with_driver(Arc::new(FakeDriver::done(events.clone())))
-        .with_epc_source(Arc::new(QueueEpc::new(["EPC-1"])));
-
-    let error = service.print_material_receipt(request()).await.unwrap_err();
-
-    assert!(matches!(error, GscaleServiceError::SubmitFailed(_)));
-    assert_eq!(
-        events.lock().unwrap().as_slice(),
-        ["create:EPC-1:1.720", "print:EPC-1", "submit:MAT-STE-001"]
-    );
-}
-
-#[tokio::test]
-async fn retries_duplicate_barcode_before_printing() {
-    let events = Arc::new(Mutex::new(Vec::new()));
-    let mut erp = FakeErp::new(events.clone());
-    erp.duplicate_failures = 1;
-    let service = GscaleService::new()
-        .with_erp(Arc::new(erp))
-        .with_driver(Arc::new(FakeDriver::done(events.clone())))
-        .with_epc_source(Arc::new(QueueEpc::new(["EPC-1", "EPC-2"])));
-
-    let response = service.print_material_receipt(request()).await.unwrap();
-
-    assert_eq!(response.epc, "EPC-2");
-    assert_eq!(
-        events.lock().unwrap().as_slice(),
-        [
-            "create:EPC-1:1.720",
-            "create:EPC-2:1.720",
-            "print:EPC-2",
-            "submit:MAT-STE-001",
-        ]
-    );
-}
-
-#[tokio::test]
 async fn rejects_small_gross_and_net_qty_before_erp() {
     let service = GscaleService::new()
         .with_erp(Arc::new(FakeErp::new(Arc::new(Mutex::new(Vec::new())))))
@@ -122,8 +35,14 @@ async fn rejects_small_gross_and_net_qty_before_erp() {
     net.gross_qty = 0.5;
     net.tare_kg = 0.45;
 
-    let gross_error = service.print_material_receipt(gross).await.unwrap_err();
-    let net_error = service.print_material_receipt(net).await.unwrap_err();
+    let gross_error = service
+        .print_material_receipt_driver_first(gross)
+        .await
+        .unwrap_err();
+    let net_error = service
+        .print_material_receipt_driver_first(net)
+        .await
+        .unwrap_err();
 
     assert_eq!(
         gross_error.to_string(),
@@ -280,7 +199,6 @@ struct FakeDriver {
     events: Arc<Mutex<Vec<String>>>,
     status: &'static str,
     ok: bool,
-    last: Mutex<Option<ScaleDriverPrintRequest>>,
 }
 
 impl FakeDriver {
@@ -289,21 +207,7 @@ impl FakeDriver {
             events,
             status: "done",
             ok: true,
-            last: Mutex::new(None),
         }
-    }
-
-    fn status_error(events: Arc<Mutex<Vec<String>>>) -> Self {
-        Self {
-            events,
-            status: "error",
-            ok: false,
-            last: Mutex::new(None),
-        }
-    }
-
-    fn last(&self) -> ScaleDriverPrintRequest {
-        self.last.lock().unwrap().clone().unwrap()
     }
 }
 
@@ -317,7 +221,6 @@ impl ScaleDriverPort for FakeDriver {
             .lock()
             .unwrap()
             .push(format!("print:{}", request.epc));
-        *self.last.lock().unwrap() = Some(request.clone());
         Ok(ScaleDriverPrintResponse {
             ok: self.ok,
             status: self.status.to_string(),

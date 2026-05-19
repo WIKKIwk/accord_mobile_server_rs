@@ -134,7 +134,6 @@ fn gscale_error(error: GscaleServiceError) -> (StatusCode, Json<RpsBatchErrorRes
         GscaleServiceError::InvalidInput(_) => StatusCode::BAD_REQUEST,
         GscaleServiceError::NotConfigured(_) => StatusCode::SERVICE_UNAVAILABLE,
         GscaleServiceError::EpcGenerationFailed => StatusCode::INTERNAL_SERVER_ERROR,
-        GscaleServiceError::DuplicateBarcodeRetriesExhausted { .. } => StatusCode::CONFLICT,
         GscaleServiceError::ErpWrite(_)
         | GscaleServiceError::PrintFailed { .. }
         | GscaleServiceError::SubmitFailed(_) => StatusCode::FAILED_DEPENDENCY,

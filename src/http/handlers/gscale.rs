@@ -26,7 +26,7 @@ pub async fn material_receipt_print(
         serde_json::from_slice(&body).map_err(|_| bad_request("invalid_json", "invalid json"))?;
     let response = state
         .gscale
-        .print_material_receipt(request)
+        .print_material_receipt_driver_first(request)
         .await
         .map_err(gscale_error)?;
     Ok(Json(
@@ -47,7 +47,6 @@ fn gscale_error(error: GscaleServiceError) -> (StatusCode, Json<GscaleErrorRespo
         GscaleServiceError::InvalidInput(_) => StatusCode::BAD_REQUEST,
         GscaleServiceError::NotConfigured(_) => StatusCode::SERVICE_UNAVAILABLE,
         GscaleServiceError::EpcGenerationFailed => StatusCode::INTERNAL_SERVER_ERROR,
-        GscaleServiceError::DuplicateBarcodeRetriesExhausted { .. } => StatusCode::CONFLICT,
         GscaleServiceError::ErpWrite(_)
         | GscaleServiceError::PrintFailed { .. }
         | GscaleServiceError::SubmitFailed(_) => StatusCode::FAILED_DEPENDENCY,

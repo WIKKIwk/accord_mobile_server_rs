@@ -56,7 +56,7 @@ async fn material_receipt_print_rejects_wrong_method() {
 }
 
 #[tokio::test]
-async fn material_receipt_print_runs_rs_transaction_flow() {
+async fn material_receipt_print_uses_parallel_driver_first_flow() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let mut state = test_state();
     state.gscale = GscaleService::new()
@@ -90,12 +90,13 @@ async fn material_receipt_print_runs_rs_transaction_flow() {
     let body = json_body(response).await;
 
     assert_eq!(body["ok"], true);
-    assert_eq!(body["status"], "submitted");
-    assert_eq!(body["draft_name"], "MAT-STE-ROUTE");
+    assert_eq!(body["status"], "printed");
+    assert_eq!(body["draft_name"], "");
     assert_eq!(body["qty"], 1.72);
+    tokio::time::sleep(Duration::from_millis(25)).await;
     assert_eq!(
         events.lock().unwrap().as_slice(),
-        ["create:1.720", "print", "submit:MAT-STE-ROUTE"]
+        ["print", "create:1.720", "submit:MAT-STE-ROUTE"]
     );
 }
 
