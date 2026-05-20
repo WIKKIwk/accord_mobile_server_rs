@@ -91,18 +91,23 @@ async fn load_if_needed(
         state.loaded = true;
         return Ok(());
     }
-    match serde_json::from_slice::<RoleDefinitionStoreFile>(&raw) {
-        Ok(file) => {
-            state.roles = file.roles;
-            state.assignments = file.assignments;
-        }
-        Err(_) => {
-            state.roles = read_map::<RoleDefinition>(path)
-                .await
-                .map_err(|_| RoleStoreError::StoreFailed)?
-                .into_iter()
-                .collect();
-        }
+    let value = serde_json::from_slice::<serde_json::Value>(&raw)
+        .map_err(|_| RoleStoreError::StoreFailed)?;
+    let current_shape = value
+        .as_object()
+        .map(|object| object.contains_key("roles") || object.contains_key("assignments"))
+        .unwrap_or(false);
+    if current_shape {
+        let file: RoleDefinitionStoreFile =
+            serde_json::from_value(value).map_err(|_| RoleStoreError::StoreFailed)?;
+        state.roles = file.roles;
+        state.assignments = file.assignments;
+    } else {
+        state.roles = read_map::<RoleDefinition>(path)
+            .await
+            .map_err(|_| RoleStoreError::StoreFailed)?
+            .into_iter()
+            .collect();
     }
     state.loaded = true;
     Ok(())
@@ -199,5 +204,32 @@ mod tests {
                 .role_id,
             "catalog_only"
         );
+    }
+
+    #[tokio::test]
+    async fn role_definition_store_reads_legacy_role_map_shape() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("roles.json");
+        tokio::fs::write(
+            &path,
+            r#"{
+                "scale_operator": {
+                    "id": "scale_operator",
+                    "label": "Scale operator",
+                    "base_role": "werka",
+                    "capability_codes": ["gscale.print"],
+                    "system": false
+                }
+            }"#,
+        )
+        .await
+        .expect("write legacy roles");
+
+        let store = RoleDefinitionStore::new(path);
+        let roles = store.role_definitions().await.expect("legacy roles");
+
+        assert_eq!(roles.len(), 1);
+        assert_eq!(roles[0].id, "scale_operator");
+        assert_eq!(roles[0].capability_codes, vec!["gscale.print"]);
     }
 }

@@ -216,11 +216,12 @@ impl AdminService {
         else {
             return Ok(None);
         };
-        Ok(self
-            .all_role_definitions()
+        self.all_role_definitions()
             .await?
             .into_iter()
-            .find(|role| role.id == assignment.role_id))
+            .find(|role| role.id == assignment.role_id)
+            .map(Some)
+            .ok_or(AdminPortError::LookupFailed)
     }
 
     pub async fn settings(&self) -> Result<AdminSettings, AdminPortError> {
@@ -515,5 +516,89 @@ impl AdminService {
             phone: entry.phone.clone(),
         })
         .map_err(|_| AdminPortError::LookupFailed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use crate::config::AppConfig;
+    use crate::core::auth::models::{Principal, PrincipalRole};
+    use crate::core::authz::{
+        Capability, MemoryRoleDefinitionStore, RoleAssignment, RoleDefinitionStorePort,
+    };
+
+    use super::AdminService;
+
+    #[tokio::test]
+    async fn stale_role_assignment_does_not_fall_back_to_default_role_access() {
+        let store = Arc::new(MemoryRoleDefinitionStore::new());
+        store
+            .put_role_assignment(RoleAssignment {
+                principal_role: PrincipalRole::Werka,
+                principal_ref: "werka".to_string(),
+                role_id: "missing_role".to_string(),
+            })
+            .await
+            .expect("put assignment");
+        let service = AdminService::new(&test_config()).with_role_store(store);
+
+        assert!(
+            !service
+                .principal_has_capability(
+                    &principal(PrincipalRole::Werka, "werka"),
+                    Capability::RpsBatchManage
+                )
+                .await
+        );
+    }
+
+    fn principal(role: PrincipalRole, ref_: &str) -> Principal {
+        Principal {
+            role,
+            display_name: "User".to_string(),
+            legal_name: "User".to_string(),
+            ref_: ref_.to_string(),
+            phone: String::new(),
+            avatar_url: String::new(),
+        }
+    }
+
+    fn test_config() -> AppConfig {
+        AppConfig {
+            bind_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            erp_url: String::new(),
+            erp_api_key: String::new(),
+            erp_api_secret: String::new(),
+            default_target_warehouse: String::new(),
+            erp_timeout: Duration::from_secs(1),
+            session_store_path: PathBuf::new(),
+            profile_store_path: PathBuf::new(),
+            push_token_store_path: PathBuf::new(),
+            admin_supplier_store_path: PathBuf::new(),
+            session_ttl_seconds: Some(3600),
+            supplier_prefix: "10".to_string(),
+            werka_prefix: "20".to_string(),
+            werka_code: String::new(),
+            werka_name: "Werka".to_string(),
+            werka_phone: String::new(),
+            admin_phone: String::new(),
+            admin_name: "Admin".to_string(),
+            admin_code: String::new(),
+            direct_read_enabled: false,
+            direct_site_config_path: String::new(),
+            direct_db_host: String::new(),
+            direct_db_port: None,
+            direct_db_user: String::new(),
+            direct_db_password: String::new(),
+            direct_db_name: String::new(),
+            catalog_cache_enabled: false,
+            catalog_cache_fallback_direct_db: false,
+            catalog_cache_path: PathBuf::new(),
+        }
     }
 }
