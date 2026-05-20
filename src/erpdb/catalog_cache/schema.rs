@@ -21,6 +21,10 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
             ON catalog_items(item_name);
         CREATE INDEX IF NOT EXISTS idx_catalog_items_group
             ON catalog_items(item_group);
+        CREATE INDEX IF NOT EXISTS idx_catalog_items_active_sort
+            ON catalog_items(disabled, is_stock_item, item_name COLLATE ERP_CATALOG, name COLLATE ERP_CATALOG);
+        CREATE INDEX IF NOT EXISTS idx_catalog_items_group_active_sort
+            ON catalog_items(item_group, disabled, is_stock_item, item_name COLLATE ERP_CATALOG, name COLLATE ERP_CATALOG);
 
         CREATE TABLE IF NOT EXISTS catalog_item_groups (
             name TEXT PRIMARY KEY NOT NULL,
@@ -107,6 +111,10 @@ mod tests {
     #[test]
     fn migrate_creates_catalog_tables_and_indexes() {
         let conn = Connection::open_in_memory().expect("open sqlite");
+        conn.create_collation("ERP_CATALOG", |left, right| {
+            left.trim().to_lowercase().cmp(&right.trim().to_lowercase())
+        })
+        .expect("catalog collation");
 
         migrate(&conn).expect("migrate");
         migrate(&conn).expect("migrate is idempotent");
@@ -130,6 +138,8 @@ mod tests {
             "idx_catalog_items_name",
             "idx_catalog_items_item_name",
             "idx_catalog_items_group",
+            "idx_catalog_items_active_sort",
+            "idx_catalog_items_group_active_sort",
             "idx_catalog_item_groups_lft",
             "idx_catalog_item_suppliers_supplier",
             "idx_catalog_item_customers_customer",

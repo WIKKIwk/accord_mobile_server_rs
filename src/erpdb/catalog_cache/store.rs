@@ -1,7 +1,9 @@
+#[cfg(test)]
 use std::cmp::Ordering as CmpOrdering;
 use std::path::Path;
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Mutex, MutexGuard};
+use std::time::Duration;
 
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 
@@ -33,6 +35,8 @@ pub enum CatalogCacheError {
 
 pub struct CatalogCacheStore {
     conn: Mutex<Connection>,
+    read_conns: Vec<Mutex<Connection>>,
+    next_read_conn: AtomicUsize,
     ready: AtomicBool,
 }
 
@@ -153,11 +157,13 @@ impl CatalogCacheStore {
         {
             std::fs::create_dir_all(parent)?;
         }
-        let conn = Connection::open(path)?;
-        register_catalog_collation(&conn)?;
+        let conn = open_catalog_connection(path)?;
         schema::migrate(&conn)?;
+        let read_conns = open_read_connections(path)?;
         Ok(Self {
             conn: Mutex::new(conn),
+            read_conns,
+            next_read_conn: AtomicUsize::new(0),
             ready: AtomicBool::new(false),
         })
     }
@@ -165,16 +171,28 @@ impl CatalogCacheStore {
     #[cfg(test)]
     pub fn in_memory() -> Result<Self, CatalogCacheError> {
         let conn = Connection::open_in_memory()?;
-        register_catalog_collation(&conn)?;
+        configure_catalog_connection(&conn)?;
         schema::migrate(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
+            read_conns: Vec::new(),
+            next_read_conn: AtomicUsize::new(0),
             ready: AtomicBool::new(false),
         })
     }
 
     pub fn mark_ready(&self) {
         self.ready.store(true, Ordering::Release);
+    }
+
+    fn lock_read(&self) -> Result<MutexGuard<'_, Connection>, CatalogCacheError> {
+        let slot = if self.read_conns.is_empty() {
+            &self.conn
+        } else {
+            let index = self.next_read_conn.fetch_add(1, Ordering::Relaxed) % self.read_conns.len();
+            &self.read_conns[index]
+        };
+        slot.lock().map_err(|_| CatalogCacheError::LockFailed)
     }
 
     pub fn replace_catalog(&self, snapshot: CatalogSnapshot) -> Result<(), CatalogCacheError> {
@@ -254,10 +272,7 @@ impl CatalogCacheStore {
     }
 
     pub fn stats(&self) -> Result<CatalogStatsSnapshot, CatalogCacheError> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| CatalogCacheError::LockFailed)?;
+        let conn = self.lock_read()?;
         Ok(CatalogStatsSnapshot {
             items: table_stats(&conn, "catalog_items")?,
             item_groups: table_stats(&conn, "catalog_item_groups")?,
@@ -272,10 +287,7 @@ impl CatalogCacheStore {
         &self,
         changed: &CatalogSnapshot,
     ) -> Result<CatalogMissingChangedKeys, CatalogCacheError> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| CatalogCacheError::LockFailed)?;
+        let conn = self.lock_read()?;
         Ok(CatalogMissingChangedKeys {
             items: single_keys_missing(
                 &conn,
@@ -407,10 +419,7 @@ impl CatalogCacheStore {
         self.ensure_ready()?;
         let limit = clamp_limit(limit, 50, 500);
         let group = group.map(str::trim).filter(|value| !value.is_empty());
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| CatalogCacheError::LockFailed)?;
+        let conn = self.lock_read()?;
         let like = sqlite_like_pattern(query);
         let mut stmt = conn.prepare(match group {
             Some(_) => {
@@ -484,10 +493,7 @@ impl CatalogCacheStore {
             ORDER BY item_name COLLATE ERP_CATALOG ASC, name COLLATE ERP_CATALOG ASC
             "#
         );
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| CatalogCacheError::LockFailed)?;
+        let conn = self.lock_read()?;
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(params_from_iter(codes.iter()), |row| {
             supplier_item_from_row(row, default_warehouse)
@@ -499,10 +505,7 @@ impl CatalogCacheStore {
         self.ensure_ready()?;
         let limit = clamp_limit(limit, 50, 500);
         let like = sqlite_like_pattern(query);
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| CatalogCacheError::LockFailed)?;
+        let conn = self.lock_read()?;
         let mut stmt = conn.prepare(
             r#"
             SELECT name
@@ -526,10 +529,7 @@ impl CatalogCacheStore {
 
     pub fn item_group_tree(&self) -> Result<Vec<AdminItemGroup>, CatalogCacheError> {
         self.ensure_ready()?;
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| CatalogCacheError::LockFailed)?;
+        let conn = self.lock_read()?;
         let mut stmt = conn.prepare(
             r#"
             SELECT name, item_group_name, parent_item_group, is_group
@@ -559,10 +559,7 @@ impl CatalogCacheStore {
         self.ensure_ready()?;
         let limit = clamp_limit(limit, 50, 500);
         let like = sqlite_like_pattern(query);
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| CatalogCacheError::LockFailed)?;
+        let conn = self.lock_read()?;
         let mut stmt = conn.prepare(
             r#"
             SELECT name, supplier_name, mobile_no
@@ -585,10 +582,7 @@ impl CatalogCacheStore {
         ref_: &str,
     ) -> Result<Option<AdminDirectoryEntry>, CatalogCacheError> {
         self.ensure_ready()?;
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| CatalogCacheError::LockFailed)?;
+        let conn = self.lock_read()?;
         conn.query_row(
             r#"
             SELECT name, supplier_name, mobile_no
@@ -612,10 +606,7 @@ impl CatalogCacheStore {
         self.ensure_ready()?;
         let limit = clamp_limit(limit, 50, 500);
         let like = sqlite_like_pattern(query);
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| CatalogCacheError::LockFailed)?;
+        let conn = self.lock_read()?;
         let mut stmt = conn.prepare(
             r#"
             SELECT name, customer_name, mobile_no
@@ -638,10 +629,7 @@ impl CatalogCacheStore {
         ref_: &str,
     ) -> Result<Option<AdminDirectoryEntry>, CatalogCacheError> {
         self.ensure_ready()?;
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| CatalogCacheError::LockFailed)?;
+        let conn = self.lock_read()?;
         conn.query_row(
             r#"
             SELECT name, customer_name, mobile_no
@@ -661,10 +649,7 @@ impl CatalogCacheStore {
         id: &str,
     ) -> Result<Option<SupplierProfileRecord>, CatalogCacheError> {
         self.ensure_ready()?;
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| CatalogCacheError::LockFailed)?;
+        let conn = self.lock_read()?;
         conn.query_row(
             r#"
             SELECT mobile_no, supplier_details, image
@@ -689,10 +674,7 @@ impl CatalogCacheStore {
         id: &str,
     ) -> Result<Option<CustomerProfileRecord>, CatalogCacheError> {
         self.ensure_ready()?;
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| CatalogCacheError::LockFailed)?;
+        let conn = self.lock_read()?;
         conn.query_row(
             r#"
             SELECT mobile_no, customer_details
@@ -719,15 +701,12 @@ impl CatalogCacheStore {
     ) -> Result<Vec<SupplierItem>, CatalogCacheError> {
         self.ensure_ready()?;
         let limit = clamp_limit(limit, 200, 500);
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| CatalogCacheError::LockFailed)?;
+        let conn = self.lock_read()?;
         let mut stmt = conn.prepare(
             r#"
             SELECT DISTINCT i.name, i.item_name, i.stock_uom, i.item_group
-            FROM catalog_item_suppliers isup
-            INNER JOIN catalog_items i ON i.name = isup.parent
+            FROM catalog_item_suppliers AS isup INDEXED BY idx_catalog_item_suppliers_supplier
+            CROSS JOIN catalog_items i ON i.name = isup.parent
             WHERE isup.supplier = ?1
               AND i.disabled = 0
               AND i.is_stock_item = 1
@@ -807,10 +786,10 @@ impl CatalogCacheStore {
     ) -> Result<Vec<CustomerItemOption>, CatalogCacheError> {
         self.ensure_ready()?;
         let limit = clamp_limit(limit, 50, 500);
-        let items = self.customer_item_options_all(default_warehouse)?;
         if query.trim().is_empty() {
-            return Ok(slice_page(&items, offset, limit));
+            return self.customer_item_options_page(limit, offset, default_warehouse);
         }
+        let items = self.customer_item_options_all(default_warehouse)?;
         Ok(slice_page(
             &rank_customer_item_options_by_query(items, query),
             offset,
@@ -827,20 +806,22 @@ impl CatalogCacheStore {
         self.ensure_ready()?;
         let limit = clamp_limit(limit, 50, 500);
         let like = sqlite_like_pattern(query);
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| CatalogCacheError::LockFailed)?;
+        let conn = self.lock_read()?;
         let mut stmt = conn.prepare(
             r#"
-            SELECT DISTINCT s.name, s.supplier_name, s.mobile_no
-            FROM catalog_item_suppliers isup
-            INNER JOIN catalog_suppliers s ON s.name = isup.supplier
-            INNER JOIN catalog_items i ON i.name = isup.parent
+            SELECT s.name, s.supplier_name, s.mobile_no
+            FROM catalog_suppliers s
             WHERE s.disabled = 0
-              AND i.disabled = 0
-              AND i.is_stock_item = 1
               AND (?1 = '' OR s.name LIKE ?2 ESCAPE '\' OR s.supplier_name LIKE ?2 ESCAPE '\' OR s.mobile_no LIKE ?2 ESCAPE '\')
+              AND EXISTS (
+                  SELECT 1
+                  FROM catalog_item_suppliers AS isup INDEXED BY idx_catalog_item_suppliers_supplier
+                  CROSS JOIN catalog_items i ON i.name = isup.parent
+                  WHERE isup.supplier = s.name
+                    AND i.disabled = 0
+                    AND i.is_stock_item = 1
+                  LIMIT 1
+              )
             ORDER BY s.modified DESC, s.supplier_name COLLATE ERP_CATALOG ASC, s.name COLLATE ERP_CATALOG ASC
             LIMIT ?3 OFFSET ?4
             "#,
@@ -867,20 +848,22 @@ impl CatalogCacheStore {
         self.ensure_ready()?;
         let limit = clamp_limit(limit, 50, 500);
         let like = sqlite_like_pattern(query);
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| CatalogCacheError::LockFailed)?;
+        let conn = self.lock_read()?;
         let mut stmt = conn.prepare(
             r#"
-            SELECT DISTINCT c.name, c.customer_name, c.mobile_no
+            SELECT c.name, c.customer_name, c.mobile_no
             FROM catalog_customers c
-            INNER JOIN catalog_item_customers icd ON icd.customer_name = c.name
-            INNER JOIN catalog_items i ON i.name = icd.parent
             WHERE c.disabled = 0
-              AND i.disabled = 0
-              AND i.is_stock_item = 1
               AND (?1 = '' OR c.name LIKE ?2 ESCAPE '\' OR c.customer_name LIKE ?2 ESCAPE '\' OR c.mobile_no LIKE ?2 ESCAPE '\')
+              AND EXISTS (
+                  SELECT 1
+                  FROM catalog_item_customers AS icd INDEXED BY idx_catalog_item_customers_customer
+                  CROSS JOIN catalog_items i ON i.name = icd.parent
+                  WHERE icd.customer_name = c.name
+                    AND i.disabled = 0
+                    AND i.is_stock_item = 1
+                  LIMIT 1
+              )
             ORDER BY c.modified DESC, c.customer_name COLLATE ERP_CATALOG ASC, c.name COLLATE ERP_CATALOG ASC
             LIMIT ?3 OFFSET ?4
             "#,
@@ -905,10 +888,7 @@ impl CatalogCacheStore {
         offset: usize,
         default_warehouse: &str,
     ) -> Result<Vec<SupplierItem>, CatalogCacheError> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| CatalogCacheError::LockFailed)?;
+        let conn = self.lock_read()?;
         let mut stmt = conn.prepare(
             r#"
             SELECT DISTINCT i.name, i.item_name, i.stock_uom, i.item_group
@@ -933,15 +913,12 @@ impl CatalogCacheStore {
         supplier_ref: &str,
         default_warehouse: &str,
     ) -> Result<Vec<SupplierItem>, CatalogCacheError> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| CatalogCacheError::LockFailed)?;
+        let conn = self.lock_read()?;
         let mut stmt = conn.prepare(
             r#"
             SELECT DISTINCT i.name, i.item_name, i.stock_uom, i.item_group
-            FROM catalog_item_suppliers isup
-            INNER JOIN catalog_items i ON i.name = isup.parent
+            FROM catalog_item_suppliers AS isup INDEXED BY idx_catalog_item_suppliers_supplier
+            CROSS JOIN catalog_items i ON i.name = isup.parent
             WHERE isup.supplier = ?1
               AND i.disabled = 0
               AND i.is_stock_item = 1
@@ -959,10 +936,7 @@ impl CatalogCacheStore {
         customer_ref: &str,
         default_warehouse: &str,
     ) -> Result<Vec<SupplierItemSearchEntry>, CatalogCacheError> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| CatalogCacheError::LockFailed)?;
+        let conn = self.lock_read()?;
         let mut stmt = conn.prepare(
             r#"
             SELECT DISTINCT i.name, i.item_name, i.stock_uom, i.item_group
@@ -988,10 +962,7 @@ impl CatalogCacheStore {
         &self,
         default_warehouse: &str,
     ) -> Result<Vec<CustomerItemOption>, CatalogCacheError> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| CatalogCacheError::LockFailed)?;
+        let conn = self.lock_read()?;
         let mut stmt = conn.prepare(
             r#"
             SELECT DISTINCT
@@ -1011,19 +982,39 @@ impl CatalogCacheStore {
             "#,
         )?;
         let rows = stmt.query_map([], |row| {
-            let customer_ref: String = row.get(0)?;
-            let customer_name: String = row.get(1)?;
-            let item_code: String = row.get(3)?;
-            let item_name: String = row.get(4)?;
-            Ok(CustomerItemOption {
-                customer_ref: customer_ref.trim().to_string(),
-                customer_name: blank_default(&customer_name, &customer_ref),
-                customer_phone: row.get::<_, String>(2)?.trim().to_string(),
-                item_code: item_code.trim().to_string(),
-                item_name: blank_default(&item_name, &item_code),
-                uom: row.get::<_, String>(5)?.trim().to_string(),
-                warehouse: default_warehouse.trim().to_string(),
-            })
+            customer_item_option_from_row(row, default_warehouse)
+        })?;
+        collect_rows(rows)
+    }
+
+    fn customer_item_options_page(
+        &self,
+        limit: usize,
+        offset: usize,
+        default_warehouse: &str,
+    ) -> Result<Vec<CustomerItemOption>, CatalogCacheError> {
+        let conn = self.lock_read()?;
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT DISTINCT
+                c.name,
+                c.customer_name,
+                c.mobile_no,
+                i.name,
+                i.item_name,
+                i.stock_uom
+            FROM catalog_item_customers icd
+            INNER JOIN catalog_customers c ON c.name = icd.customer_name
+            INNER JOIN catalog_items i ON i.name = icd.parent
+            WHERE c.disabled = 0
+              AND i.disabled = 0
+              AND i.is_stock_item = 1
+            ORDER BY i.item_name COLLATE ERP_CATALOG ASC, c.customer_name COLLATE ERP_CATALOG ASC, i.name COLLATE ERP_CATALOG ASC
+            LIMIT ?1 OFFSET ?2
+            "#,
+        )?;
+        let rows = stmt.query_map(params![limit as i64, offset as i64], |row| {
+            customer_item_option_from_row(row, default_warehouse)
         })?;
         collect_rows(rows)
     }
@@ -1055,6 +1046,25 @@ fn supplier_item_from_row(
         uom: row.get::<_, String>(2)?.trim().to_string(),
         warehouse: default_warehouse.trim().to_string(),
         item_group: row.get::<_, String>(3)?.trim().to_string(),
+    })
+}
+
+fn customer_item_option_from_row(
+    row: &rusqlite::Row<'_>,
+    default_warehouse: &str,
+) -> rusqlite::Result<CustomerItemOption> {
+    let customer_ref: String = row.get(0)?;
+    let customer_name: String = row.get(1)?;
+    let item_code: String = row.get(3)?;
+    let item_name: String = row.get(4)?;
+    Ok(CustomerItemOption {
+        customer_ref: customer_ref.trim().to_string(),
+        customer_name: blank_default(&customer_name, &customer_ref),
+        customer_phone: row.get::<_, String>(2)?.trim().to_string(),
+        item_code: item_code.trim().to_string(),
+        item_name: blank_default(&item_name, &item_code),
+        uom: row.get::<_, String>(5)?.trim().to_string(),
+        warehouse: default_warehouse.trim().to_string(),
     })
 }
 
@@ -1393,6 +1403,33 @@ fn sqlite_like_pattern(query: &str) -> String {
     format!("%{escaped}%")
 }
 
+fn open_catalog_connection(path: &Path) -> Result<Connection, CatalogCacheError> {
+    let conn = Connection::open(path)?;
+    configure_catalog_connection(&conn)?;
+    Ok(conn)
+}
+
+fn open_read_connections(path: &Path) -> Result<Vec<Mutex<Connection>>, CatalogCacheError> {
+    let count = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(4)
+        .clamp(4, 16);
+    let mut connections = Vec::with_capacity(count);
+    for _ in 0..count {
+        connections.push(Mutex::new(open_catalog_connection(path)?));
+    }
+    Ok(connections)
+}
+
+fn configure_catalog_connection(conn: &Connection) -> rusqlite::Result<()> {
+    conn.busy_timeout(Duration::from_secs(5))?;
+    conn.pragma_update(None, "foreign_keys", "ON")?;
+    conn.pragma_update(None, "journal_mode", "WAL")?;
+    conn.pragma_update(None, "synchronous", "NORMAL")?;
+    register_catalog_collation(conn)?;
+    Ok(())
+}
+
 fn register_catalog_collation(conn: &Connection) -> rusqlite::Result<()> {
     conn.create_collation("ERP_CATALOG", |left, right| {
         catalog_sort_key(left).cmp(&catalog_sort_key(right))
@@ -1529,6 +1566,120 @@ mod tests {
             catalog_sort_key("Almond ﬁstashka paket")
                 .cmp(&catalog_sort_key("Almond qurt samarqand paket")),
             CmpOrdering::Less
+        );
+    }
+
+    #[test]
+    fn items_page_query_plan_uses_active_sort_index() {
+        let store = seeded_store();
+        let conn = store.conn.lock().expect("conn");
+        let plan = conn
+            .prepare(
+                r#"
+                EXPLAIN QUERY PLAN
+                SELECT name, item_name, stock_uom, item_group
+                FROM catalog_items
+                WHERE disabled = 0
+                  AND is_stock_item = 1
+                  AND (?1 = '' OR name LIKE ?2 ESCAPE '\' OR item_name LIKE ?2 ESCAPE '\')
+                ORDER BY item_name COLLATE ERP_CATALOG ASC, name COLLATE ERP_CATALOG ASC
+                LIMIT ?3 OFFSET ?4
+                "#,
+            )
+            .expect("prepare")
+            .query_map(params!["", "%", 80_i64, 0_i64], |row| {
+                row.get::<_, String>(3)
+            })
+            .expect("query plan")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect plan")
+            .join("\n");
+
+        assert!(
+            plan.contains("idx_catalog_items_active_sort"),
+            "expected active sort index in plan, got:\n{plan}"
+        );
+        assert!(
+            !plan.contains("USE TEMP B-TREE FOR ORDER BY"),
+            "expected indexed ordering, got:\n{plan}"
+        );
+    }
+
+    #[test]
+    fn supplier_items_query_plan_starts_from_supplier_mapping() {
+        let store = seeded_store();
+        let conn = store.conn.lock().expect("conn");
+        let plan = conn
+            .prepare(
+                r#"
+                EXPLAIN QUERY PLAN
+                SELECT DISTINCT i.name, i.item_name, i.stock_uom, i.item_group
+                FROM catalog_item_suppliers AS isup INDEXED BY idx_catalog_item_suppliers_supplier
+                CROSS JOIN catalog_items i ON i.name = isup.parent
+                WHERE isup.supplier = ?1
+                  AND i.disabled = 0
+                  AND i.is_stock_item = 1
+                ORDER BY i.item_name COLLATE ERP_CATALOG ASC, i.name COLLATE ERP_CATALOG ASC
+                "#,
+            )
+            .expect("prepare")
+            .query_map(params!["SUP-001"], |row| row.get::<_, String>(3))
+            .expect("query plan")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect plan")
+            .join("\n");
+
+        assert!(
+            plan.contains("idx_catalog_item_suppliers_supplier"),
+            "expected supplier mapping index in plan, got:\n{plan}"
+        );
+        assert!(
+            !plan.contains("idx_catalog_items_active_sort"),
+            "expected mapping-first lookup, got:\n{plan}"
+        );
+    }
+
+    #[test]
+    fn werka_suppliers_query_plan_uses_supplier_exists_mapping_index() {
+        let store = seeded_store();
+        let conn = store.conn.lock().expect("conn");
+        let plan = conn
+            .prepare(
+                r#"
+                EXPLAIN QUERY PLAN
+                SELECT s.name, s.supplier_name, s.mobile_no
+                FROM catalog_suppliers s
+                WHERE s.disabled = 0
+                  AND (?1 = '' OR s.name LIKE ?2 ESCAPE '\' OR s.supplier_name LIKE ?2 ESCAPE '\' OR s.mobile_no LIKE ?2 ESCAPE '\')
+                  AND EXISTS (
+                      SELECT 1
+                      FROM catalog_item_suppliers AS isup INDEXED BY idx_catalog_item_suppliers_supplier
+                      CROSS JOIN catalog_items i ON i.name = isup.parent
+                      WHERE isup.supplier = s.name
+                        AND i.disabled = 0
+                        AND i.is_stock_item = 1
+                      LIMIT 1
+                  )
+                ORDER BY s.modified DESC, s.supplier_name COLLATE ERP_CATALOG ASC, s.name COLLATE ERP_CATALOG ASC
+                LIMIT ?3 OFFSET ?4
+                "#,
+            )
+            .expect("prepare")
+            .query_map(params!["", "%", 80_i64, 0_i64], |row| {
+                row.get::<_, String>(3)
+            })
+            .expect("query plan")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect plan")
+            .join("\n");
+
+        assert!(
+            plan.contains("idx_catalog_item_suppliers_supplier"),
+            "expected supplier mapping index in plan, got:\n{plan}"
+        );
+        assert!(
+            !plan.contains("idx_catalog_items_active_sort"),
+            "expected supplier-first lookup, got:\n{plan}"
         );
     }
 
