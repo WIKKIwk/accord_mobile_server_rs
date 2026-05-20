@@ -1,6 +1,6 @@
 use super::{
-    DirectDbConfig, DirectDbPoolConfig, DotEnvPersister, SystemResources, parse_bind_addr,
-    parse_proc_meminfo_bytes,
+    DirectDbConfig, DirectDbPoolConfig, DotEnvPersister, SystemResources,
+    catalog_cache_config_from, parse_bind_addr, parse_proc_meminfo_bytes,
 };
 use crate::core::admin::ports::AdminEnvPersister;
 use std::time::Duration;
@@ -69,6 +69,33 @@ fn direct_db_pool_env_overrides_defaults_and_clamps_min() {
     assert_eq!(pool.min_connections, 12);
     assert_eq!(pool.acquire_timeout, Duration::from_millis(900));
     assert_eq!(pool.idle_timeout, Duration::from_secs(30));
+}
+
+#[test]
+fn catalog_cache_config_defaults_disabled_with_direct_db_fallback() {
+    let env = std::collections::BTreeMap::<&str, &str>::new();
+    let config = catalog_cache_config_from(&|key| env.get(key).map(|value| value.to_string()));
+
+    assert!(!config.enabled);
+    assert!(config.fallback_direct_db);
+    assert_eq!(
+        config.path,
+        std::path::PathBuf::from("data/catalog_cache.sqlite")
+    );
+}
+
+#[test]
+fn catalog_cache_config_reads_env() {
+    let env = std::collections::BTreeMap::from([
+        ("ERP_CATALOG_CACHE_ENABLED", "1"),
+        ("ERP_CATALOG_CACHE_FALLBACK_DIRECT_DB", "0"),
+        ("ERP_CATALOG_CACHE_PATH", "/tmp/catalog.sqlite"),
+    ]);
+    let config = catalog_cache_config_from(&|key| env.get(key).map(|value| value.to_string()));
+
+    assert!(config.enabled);
+    assert!(!config.fallback_direct_db);
+    assert_eq!(config.path, std::path::PathBuf::from("/tmp/catalog.sqlite"));
 }
 
 #[test]

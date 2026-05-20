@@ -1,4 +1,5 @@
 mod admin;
+pub mod catalog_cache;
 mod credentials;
 mod customer_issue;
 mod notification_detail;

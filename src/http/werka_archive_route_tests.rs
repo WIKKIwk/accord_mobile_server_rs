@@ -46,6 +46,9 @@ fn test_state() -> AppState {
         direct_db_user: String::new(),
         direct_db_password: String::new(),
         direct_db_name: String::new(),
+        catalog_cache_enabled: false,
+        catalog_cache_fallback_direct_db: true,
+        catalog_cache_path: std::path::PathBuf::from("data/catalog_cache.sqlite"),
     });
     state.sessions = SessionManager::memory(Some(30 * 24 * 60 * 60));
     state

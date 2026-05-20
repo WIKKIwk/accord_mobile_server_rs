@@ -35,6 +35,9 @@ pub struct AppConfig {
     pub direct_db_user: String,
     pub direct_db_password: String,
     pub direct_db_name: String,
+    pub catalog_cache_enabled: bool,
+    pub catalog_cache_fallback_direct_db: bool,
+    pub catalog_cache_path: PathBuf,
 }
 
 impl AppConfig {
@@ -62,6 +65,7 @@ impl AppConfig {
             .ok()
             .and_then(|raw| raw.trim().parse::<u16>().ok())
             .filter(|port| *port > 0);
+        let catalog_cache = catalog_cache_config_from(&|key| std::env::var(key).ok());
 
         Ok(Self {
             bind_addr: parse_bind_addr(&addr)?,
@@ -90,6 +94,9 @@ impl AppConfig {
             direct_db_user: env_or("ERP_DIRECT_DB_USER", ""),
             direct_db_password: env_or("ERP_DIRECT_DB_PASSWORD", ""),
             direct_db_name: env_or("ERP_DIRECT_DB_NAME", ""),
+            catalog_cache_enabled: catalog_cache.enabled,
+            catalog_cache_fallback_direct_db: catalog_cache.fallback_direct_db,
+            catalog_cache_path: catalog_cache.path,
         })
     }
 
@@ -313,9 +320,36 @@ fn dotenv_value(value: &str) -> String {
     format!("\"{escaped}\"")
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CatalogCacheEnvConfig {
+    enabled: bool,
+    fallback_direct_db: bool,
+    path: PathBuf,
+}
+
+fn catalog_cache_config_from(get_env: &impl Fn(&str) -> Option<String>) -> CatalogCacheEnvConfig {
+    CatalogCacheEnvConfig {
+        enabled: env_or_from(get_env, "ERP_CATALOG_CACHE_ENABLED", "") == "1",
+        fallback_direct_db: env_or_from(get_env, "ERP_CATALOG_CACHE_FALLBACK_DIRECT_DB", "1")
+            != "0",
+        path: PathBuf::from(env_or_from(
+            get_env,
+            "ERP_CATALOG_CACHE_PATH",
+            "data/catalog_cache.sqlite",
+        )),
+    }
+}
+
 fn env_or(key: &str, fallback: &str) -> String {
     std::env::var(key)
         .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+fn env_or_from(get_env: &impl Fn(&str) -> Option<String>, key: &str, fallback: &str) -> String {
+    get_env(key)
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| fallback.to_string())

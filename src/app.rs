@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::ai::werka_search::WerkaAiSearchService;
 use crate::config::{AppConfig, DotEnvPersister};
@@ -13,6 +14,9 @@ use crate::core::push::service::PushService;
 use crate::core::rps_batch::{RpsBatchLmdbStore, RpsBatchService};
 use crate::core::session::manager::SessionManager;
 use crate::core::werka::service::WerkaService;
+use crate::erpdb::catalog_cache::reader::CatalogCacheReader;
+use crate::erpdb::catalog_cache::store::CatalogCacheStore;
+use crate::erpdb::catalog_cache::sync::{sync_catalog_delta_once, sync_catalog_once};
 use crate::erpdb::reader::DirectDbReader;
 use crate::erpnext::client::ErpnextClient;
 use crate::fcm::discover_push_sender;
@@ -20,6 +24,7 @@ use crate::rps::RpsDriverClient;
 use crate::store::admin_state_store::AdminSupplierStateBackend;
 use crate::store::profile_store::{LmdbProfileStore, ProfileStore};
 use crate::store::push_token_store::{LmdbPushTokenStore, PushTokenStore};
+use tokio::time::sleep;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -140,19 +145,64 @@ impl AppState {
                     database = %db_config.name,
                     "direct DB read enabled for Werka home"
                 );
-                let direct_reader = Arc::new(DirectDbReader::new(db_config));
+                let direct_reader = Arc::new(DirectDbReader::new(db_config.clone()));
                 if let Some(client) = &erp_client {
                     client.set_credential_provider(direct_reader.clone());
                 }
-                admin = admin
-                    .with_read_port(direct_reader.clone())
-                    .with_credential_port(direct_reader.clone());
-                werka = werka
-                    .with_lookup(direct_reader.clone())
-                    .with_customer_issue_source_lookup(direct_reader.clone())
-                    .with_notification_detail_lookup(direct_reader.clone())
-                    .with_supplier_read_lookup(direct_reader.clone());
-                profiles = profiles.with_read_lookup(direct_reader.clone());
+                let catalog_reader = if config.catalog_cache_enabled {
+                    match CatalogCacheStore::open(&config.catalog_cache_path) {
+                        Ok(store) => {
+                            let store = Arc::new(store);
+                            let sync_store = store.clone();
+                            let sync_reader = (*direct_reader).clone();
+                            let sync_interval = catalog_cache_sync_interval();
+                            tokio::spawn(async move {
+                                run_catalog_cache_sync_loop(sync_reader, sync_store, sync_interval)
+                                    .await;
+                            });
+                            Some(Arc::new(
+                                CatalogCacheReader::new(store, db_config.default_warehouse.clone())
+                                    .with_fallback(direct_reader.clone()),
+                            ))
+                        }
+                        Err(error) => {
+                            if config.catalog_cache_fallback_direct_db {
+                                tracing::warn!(
+                                    %error,
+                                    path = %config.catalog_cache_path.display(),
+                                    "catalog cache unavailable; using direct DB reads"
+                                );
+                                None
+                            } else {
+                                panic!("catalog cache unavailable: {error}");
+                            }
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                if let Some(catalog_reader) = catalog_reader {
+                    admin = admin
+                        .with_read_port(catalog_reader.clone())
+                        .with_credential_port(direct_reader.clone());
+                    werka = werka
+                        .with_lookup(catalog_reader.clone())
+                        .with_customer_issue_source_lookup(direct_reader.clone())
+                        .with_notification_detail_lookup(direct_reader.clone())
+                        .with_supplier_read_lookup(direct_reader.clone());
+                    profiles = profiles.with_read_lookup(catalog_reader.clone());
+                } else {
+                    admin = admin
+                        .with_read_port(direct_reader.clone())
+                        .with_credential_port(direct_reader.clone());
+                    werka = werka
+                        .with_lookup(direct_reader.clone())
+                        .with_customer_issue_source_lookup(direct_reader.clone())
+                        .with_notification_detail_lookup(direct_reader.clone())
+                        .with_supplier_read_lookup(direct_reader.clone());
+                    profiles = profiles.with_read_lookup(direct_reader.clone());
+                }
             }
             Ok(None) => {}
             Err(error) => {
@@ -173,6 +223,54 @@ impl AppState {
             sessions,
         }
     }
+}
+
+async fn run_catalog_cache_sync_loop(
+    direct_reader: DirectDbReader,
+    store: Arc<CatalogCacheStore>,
+    interval: Duration,
+) {
+    let mut full_sync_needed = true;
+    loop {
+        let was_full_sync = full_sync_needed;
+        let sync_result = if full_sync_needed {
+            sync_catalog_once(&direct_reader, &store).await
+        } else {
+            sync_catalog_delta_once(&direct_reader, &store).await
+        };
+
+        match sync_result {
+            Ok(report) => {
+                full_sync_needed = false;
+                tracing::info!(
+                    full = was_full_sync,
+                    items = report.items,
+                    item_groups = report.item_groups,
+                    suppliers = report.suppliers,
+                    customers = report.customers,
+                    item_suppliers = report.item_suppliers,
+                    item_customers = report.item_customers,
+                    "catalog cache sync completed"
+                );
+            }
+            Err(error) => {
+                tracing::warn!(%error, "catalog cache sync failed");
+                full_sync_needed = true;
+            }
+        }
+        if interval.is_zero() {
+            break;
+        }
+        sleep(interval).await;
+    }
+}
+
+fn catalog_cache_sync_interval() -> Duration {
+    let ms = std::env::var("ERP_CATALOG_CACHE_SYNC_INTERVAL_MS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .unwrap_or(1_000);
+    Duration::from_millis(ms)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -436,7 +534,9 @@ fn test_lmdb_path(
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use super::{LocalStoreBackend, derive_lmdb_path, local_store_backend_from};
+    use super::{
+        LocalStoreBackend, catalog_cache_sync_interval, derive_lmdb_path, local_store_backend_from,
+    };
 
     #[test]
     fn local_store_backend_defaults_to_lmdb_for_production() {
@@ -477,6 +577,18 @@ mod tests {
         assert_eq!(
             derive_lmdb_path(Path::new(""), "fallback.lmdb"),
             PathBuf::from("fallback.lmdb")
+        );
+    }
+
+    #[test]
+    fn catalog_cache_sync_interval_defaults_to_one_second() {
+        unsafe {
+            std::env::remove_var("ERP_CATALOG_CACHE_SYNC_INTERVAL_MS");
+        }
+
+        assert_eq!(
+            catalog_cache_sync_interval(),
+            std::time::Duration::from_secs(1)
         );
     }
 }
