@@ -1,6 +1,7 @@
 mod helpers;
 mod mutations;
 mod read;
+mod roles;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -125,103 +126,6 @@ impl AdminService {
     pub fn with_auth_config_sink(mut self, auth_config_sink: Arc<dyn AdminAuthConfigSink>) -> Self {
         self.auth_config_sink = Some(auth_config_sink);
         self
-    }
-
-    pub fn with_role_store(mut self, role_store: Arc<dyn RoleDefinitionStorePort>) -> Self {
-        self.role_store = role_store;
-        self
-    }
-
-    pub async fn role_definitions(&self) -> Result<Vec<RoleDefinition>, AdminPortError> {
-        self.all_role_definitions().await
-    }
-
-    async fn all_role_definitions(&self) -> Result<Vec<RoleDefinition>, AdminPortError> {
-        let mut roles = system_role_definitions();
-        roles.extend(
-            self.role_store
-                .role_definitions()
-                .await
-                .map_err(|_| AdminPortError::LookupFailed)?,
-        );
-        roles.sort_by(|left, right| {
-            left.system
-                .cmp(&right.system)
-                .reverse()
-                .then_with(|| left.id.cmp(&right.id))
-        });
-        Ok(roles)
-    }
-
-    pub async fn role_assignments(&self) -> Result<Vec<RoleAssignment>, AdminPortError> {
-        self.role_store
-            .role_assignments()
-            .await
-            .map_err(|_| AdminPortError::LookupFailed)
-    }
-
-    pub async fn upsert_role_definition(
-        &self,
-        input: RoleDefinitionUpsert,
-    ) -> Result<RoleDefinition, AdminPortError> {
-        let role = normalize_custom_role(input)
-            .map_err(|error| AdminPortError::InvalidInput(error.to_string()))?;
-        self.role_store
-            .put_role_definition(role.clone())
-            .await
-            .map_err(|_| AdminPortError::LookupFailed)?;
-        Ok(role)
-    }
-
-    pub async fn upsert_role_assignment(
-        &self,
-        input: RoleAssignmentUpsert,
-    ) -> Result<RoleAssignment, AdminPortError> {
-        let roles = self.all_role_definitions().await?;
-        let assignment = normalize_role_assignment(input, &roles)
-            .map_err(|error| AdminPortError::InvalidInput(error.to_string()))?;
-        self.role_store
-            .put_role_assignment(assignment.clone())
-            .await
-            .map_err(|_| AdminPortError::LookupFailed)?;
-        Ok(assignment)
-    }
-
-    pub async fn principal_has_capability(
-        &self,
-        principal: &Principal,
-        capability: Capability,
-    ) -> bool {
-        match self.principal_assigned_role(principal).await {
-            Ok(Some(role)) => capability_code(capability)
-                .map(|code| role.capability_codes.iter().any(|item| item == code))
-                .unwrap_or(false),
-            Ok(None) => has_capability(principal, capability),
-            Err(_) => false,
-        }
-    }
-
-    async fn principal_assigned_role(
-        &self,
-        principal: &Principal,
-    ) -> Result<Option<RoleDefinition>, AdminPortError> {
-        let key = role_assignment_key(&principal.role, &principal.ref_);
-        let Some(assignment) = self
-            .role_assignments()
-            .await?
-            .into_iter()
-            .find(|assignment| {
-                role_assignment_key(&assignment.principal_role, &assignment.principal_ref) == key
-            })
-        else {
-            return Ok(None);
-        };
-        self.all_role_definitions()
-            .await?
-            .into_iter()
-            .find(|role| role.id == assignment.role_id)
-            .map(Some)
-            .ok_or(AdminPortError::LookupFailed)
     }
 
     pub async fn settings(&self) -> Result<AdminSettings, AdminPortError> {
@@ -520,85 +424,5 @@ impl AdminService {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-    use std::path::PathBuf;
-    use std::sync::Arc;
-    use std::time::Duration;
-
-    use crate::config::AppConfig;
-    use crate::core::auth::models::{Principal, PrincipalRole};
-    use crate::core::authz::{
-        Capability, MemoryRoleDefinitionStore, RoleAssignment, RoleDefinitionStorePort,
-    };
-
-    use super::AdminService;
-
-    #[tokio::test]
-    async fn stale_role_assignment_does_not_fall_back_to_default_role_access() {
-        let store = Arc::new(MemoryRoleDefinitionStore::new());
-        store
-            .put_role_assignment(RoleAssignment {
-                principal_role: PrincipalRole::Werka,
-                principal_ref: "werka".to_string(),
-                role_id: "missing_role".to_string(),
-            })
-            .await
-            .expect("put assignment");
-        let service = AdminService::new(&test_config()).with_role_store(store);
-
-        assert!(
-            !service
-                .principal_has_capability(
-                    &principal(PrincipalRole::Werka, "werka"),
-                    Capability::RpsBatchManage
-                )
-                .await
-        );
-    }
-
-    fn principal(role: PrincipalRole, ref_: &str) -> Principal {
-        Principal {
-            role,
-            display_name: "User".to_string(),
-            legal_name: "User".to_string(),
-            ref_: ref_.to_string(),
-            phone: String::new(),
-            avatar_url: String::new(),
-        }
-    }
-
-    fn test_config() -> AppConfig {
-        AppConfig {
-            bind_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
-            erp_url: String::new(),
-            erp_api_key: String::new(),
-            erp_api_secret: String::new(),
-            default_target_warehouse: String::new(),
-            erp_timeout: Duration::from_secs(1),
-            session_store_path: PathBuf::new(),
-            profile_store_path: PathBuf::new(),
-            push_token_store_path: PathBuf::new(),
-            admin_supplier_store_path: PathBuf::new(),
-            session_ttl_seconds: Some(3600),
-            supplier_prefix: "10".to_string(),
-            werka_prefix: "20".to_string(),
-            werka_code: String::new(),
-            werka_name: "Werka".to_string(),
-            werka_phone: String::new(),
-            admin_phone: String::new(),
-            admin_name: "Admin".to_string(),
-            admin_code: String::new(),
-            direct_read_enabled: false,
-            direct_site_config_path: String::new(),
-            direct_db_host: String::new(),
-            direct_db_port: None,
-            direct_db_user: String::new(),
-            direct_db_password: String::new(),
-            direct_db_name: String::new(),
-            catalog_cache_enabled: false,
-            catalog_cache_fallback_direct_db: false,
-            catalog_cache_path: PathBuf::new(),
-        }
-    }
-}
+#[path = "service_tests.rs"]
+mod tests;
