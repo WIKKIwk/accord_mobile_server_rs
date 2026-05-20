@@ -40,6 +40,18 @@ pub async fn werka_code_regenerate(
     }
 }
 
+pub async fn capabilities(
+    State(state): State<AppState>,
+    method: Method,
+    headers: HeaderMap,
+) -> Result<Response, AdminError> {
+    authorize_admin(&state, &headers).await?;
+    if method != Method::GET {
+        return Err(method_not_allowed());
+    }
+    Ok(json_response(capability_catalog_entries()))
+}
+
 pub(super) async fn authorize_admin(
     state: &AppState,
     headers: &HeaderMap,
@@ -50,7 +62,7 @@ pub(super) async fn authorize_admin(
         .get(&token)
         .await
         .map_err(|_| unauthorized())?;
-    if principal.role == PrincipalRole::Admin {
+    if has_capability(&principal, Capability::AdminAccess) {
         Ok(principal)
     } else {
         Err(forbidden())

@@ -6,6 +6,7 @@ use serde::Deserialize;
 
 use crate::app::AppState;
 use crate::core::auth::models::{Principal, PrincipalRole};
+use crate::core::authz::{Capability, has_capability};
 use crate::core::customer::models::{
     CustomerDeliveryDetail, CustomerDeliveryResponseRequest, CustomerHomeSummary,
 };
@@ -154,7 +155,7 @@ async fn authorize(
 }
 
 fn require_customer(principal: &Principal) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
-    if principal.role == PrincipalRole::Customer {
+    if has_capability(principal, Capability::CustomerAccess) {
         Ok(())
     } else {
         Err(forbidden())

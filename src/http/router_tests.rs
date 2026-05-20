@@ -140,6 +140,7 @@ async fn go_mobile_route_inventory_is_registered() {
         "/v1/mobile/werka/archive/pdf",
         "/v1/mobile/werka/confirm",
         "/v1/mobile/admin/settings",
+        "/v1/mobile/admin/capabilities",
         "/v1/mobile/admin/suppliers",
         "/v1/mobile/admin/suppliers/list",
         "/v1/mobile/admin/customers",

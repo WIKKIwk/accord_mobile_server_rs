@@ -16,7 +16,7 @@ pub use suppliers::{
     supplier_summary, suppliers,
 };
 use system::authorize_admin;
-pub use system::{items_bulk_move_group, werka_code_regenerate};
+pub use system::{capabilities, items_bulk_move_group, werka_code_regenerate};
 
 use axum::Json;
 use axum::body::Bytes;
@@ -36,7 +36,8 @@ use crate::core::admin::models::{
     AdminSuppliersPage,
 };
 use crate::core::admin::ports::AdminPortError;
-use crate::core::auth::models::{Principal, PrincipalRole};
+use crate::core::auth::models::Principal;
+use crate::core::authz::{Capability, capability_catalog_entries, has_capability};
 use crate::core::werka::models::{CustomerDirectoryEntry, DispatchRecord, SupplierItem};
 use crate::http::handlers::auth::bearer_token;
 

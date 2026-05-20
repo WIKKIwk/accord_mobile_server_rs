@@ -5,7 +5,8 @@ use axum::http::{HeaderMap, Method, StatusCode};
 use serde_json::{Value, json};
 
 use crate::app::AppState;
-use crate::core::auth::models::{Principal, PrincipalRole};
+use crate::core::auth::models::Principal;
+use crate::core::authz::{Capability, has_capability};
 use crate::core::werka::ports::{WerkaAiSearchError, WerkaAiSearchImage};
 use crate::http::handlers::auth::bearer_token;
 
@@ -25,7 +26,7 @@ pub async fn ai_search_suggestion(
         ));
     }
     let principal = authorize(&state, &headers).await?;
-    if principal.role != PrincipalRole::Werka {
+    if !has_capability(&principal, Capability::WerkaAccess) {
         return Err(error(StatusCode::FORBIDDEN, "forbidden"));
     }
     if !state.werka.ai_search_configured() {

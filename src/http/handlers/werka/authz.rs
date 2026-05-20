@@ -2,7 +2,8 @@ use axum::Json;
 use axum::http::{HeaderMap, StatusCode};
 
 use crate::app::AppState;
-use crate::core::auth::models::{Principal, PrincipalRole};
+use crate::core::auth::models::Principal;
+use crate::core::authz::{Capability, has_capability};
 use crate::http::handlers::auth::{ErrorResponse, bearer_token};
 
 pub(super) async fn authorize(
@@ -16,7 +17,7 @@ pub(super) async fn authorize(
 pub(super) fn require_werka(
     principal: &Principal,
 ) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
-    if principal.role == PrincipalRole::Werka {
+    if has_capability(principal, Capability::WerkaAccess) {
         Ok(())
     } else {
         Err((

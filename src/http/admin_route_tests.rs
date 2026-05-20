@@ -123,6 +123,49 @@ async fn admin_settings_returns_config_shape_like_go() {
 }
 
 #[tokio::test]
+async fn admin_capabilities_returns_role_builder_catalog() {
+    let state = test_state();
+    let admin_token = session(&state, PrincipalRole::Admin).await;
+    let supplier_token = session(&state, PrincipalRole::Supplier).await;
+
+    let forbidden = build_router(state.clone())
+        .oneshot(request(
+            "GET",
+            "/v1/mobile/admin/capabilities",
+            &supplier_token,
+        ))
+        .await
+        .expect("response");
+    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+    assert_eq!(json_body(forbidden).await["error"], "forbidden");
+
+    let response = build_router(state)
+        .oneshot(request(
+            "GET",
+            "/v1/mobile/admin/capabilities",
+            &admin_token,
+        ))
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let value = json_body(response).await;
+    let items = value.as_array().expect("catalog array");
+
+    assert!(items.iter().any(|item| item["code"] == "admin.access"));
+    assert!(
+        items
+            .iter()
+            .any(|item| item["code"] == "gscale.catalog.read")
+    );
+    assert!(items.iter().any(|item| {
+        item["default_roles"]
+            .as_array()
+            .expect("roles")
+            .contains(&serde_json::json!("werka"))
+    }));
+}
+
+#[tokio::test]
 async fn admin_settings_ignores_state_read_failure_like_go() {
     let mut state = test_state();
     let erp = Arc::new(FakeAdminReadPort);

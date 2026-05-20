@@ -6,7 +6,8 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 
 use crate::app::AppState;
-use crate::core::auth::models::{Principal, PrincipalRole};
+use crate::core::auth::models::Principal;
+use crate::core::authz::{Capability, has_capability};
 use crate::http::handlers::auth::{ErrorResponse, bearer_token, with_avatar_proxy};
 
 const AVATAR_BODY_LIMIT: usize = 5 * 1024 * 1024;
@@ -160,7 +161,7 @@ pub async fn avatar_view(
     let Ok(principal) = state.sessions.get(&token).await else {
         return unauthorized().into_response();
     };
-    if principal.role != PrincipalRole::Supplier {
+    if !has_capability(&principal, Capability::SupplierAvatarManage) {
         return (
             StatusCode::FORBIDDEN,
             axum::Json(ErrorResponse { error: "forbidden" }),

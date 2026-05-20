@@ -6,7 +6,8 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::app::AppState;
-use crate::core::auth::models::{Principal, PrincipalRole};
+use crate::core::auth::models::Principal;
+use crate::core::authz::{Capability, has_capability};
 use crate::core::push::models::PushTokenRegisterRequest;
 use crate::core::push::ports::PushServiceError;
 use crate::http::handlers::auth::{ErrorResponse, bearer_token};
@@ -72,7 +73,7 @@ async fn authorize(
 }
 
 fn require_push_role(principal: &Principal) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
-    if principal.role == PrincipalRole::Supplier || principal.role == PrincipalRole::Werka {
+    if has_capability(principal, Capability::PushTokenManage) {
         Ok(())
     } else {
         Err((
