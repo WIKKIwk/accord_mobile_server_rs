@@ -41,6 +41,7 @@ async fn admin_method_checks_happen_after_auth_like_go() {
     let state = test_state();
     let cases = [
         ("PATCH", "/v1/mobile/admin/settings"),
+        ("POST", "/v1/mobile/admin/roles"),
         ("PATCH", "/v1/mobile/admin/suppliers"),
         ("POST", "/v1/mobile/admin/suppliers/list"),
         ("POST", "/v1/mobile/admin/suppliers/summary"),
@@ -162,6 +163,67 @@ async fn admin_capabilities_returns_role_builder_catalog() {
             .as_array()
             .expect("roles")
             .contains(&serde_json::json!("werka"))
+    }));
+}
+
+#[tokio::test]
+async fn admin_roles_can_list_system_roles_and_save_custom_packages() {
+    let state = test_state();
+    let admin_token = session(&state, PrincipalRole::Admin).await;
+    let supplier_token = session(&state, PrincipalRole::Supplier).await;
+
+    let forbidden = build_router(state.clone())
+        .oneshot(request("GET", "/v1/mobile/admin/roles", &supplier_token))
+        .await
+        .expect("response");
+    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+    assert_eq!(json_body(forbidden).await["error"], "forbidden");
+
+    let response = build_router(state.clone())
+        .oneshot(request("GET", "/v1/mobile/admin/roles", &admin_token))
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let value = json_body(response).await;
+    let roles = value.as_array().expect("roles array");
+    assert!(roles.iter().any(|role| role["id"] == "admin"));
+    assert!(roles.iter().any(|role| role["id"] == "werka"));
+
+    let response = build_router(state.clone())
+        .oneshot(request_with_body(
+            "PUT",
+            "/v1/mobile/admin/roles",
+            &admin_token,
+            r#"{
+                "id":"scale_operator",
+                "label":"Scale operator",
+                "base_role":"werka",
+                "capability_codes":[
+                    "gscale.catalog.read",
+                    "gscale.print",
+                    "rps.batch.manage",
+                    "gscale.print"
+                ]
+            }"#,
+        ))
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let saved = json_body(response).await;
+    assert_eq!(saved["id"], "scale_operator");
+    assert_eq!(saved["system"], false);
+    assert_eq!(
+        saved["capability_codes"],
+        serde_json::json!(["gscale.catalog.read", "gscale.print", "rps.batch.manage"])
+    );
+
+    let response = build_router(state)
+        .oneshot(request("GET", "/v1/mobile/admin/roles", &admin_token))
+        .await
+        .expect("response");
+    let value = json_body(response).await;
+    assert!(value.as_array().expect("roles").iter().any(|role| {
+        role["id"] == "scale_operator" && role["capability_codes"][0] == "gscale.catalog.read"
     }));
 }
 

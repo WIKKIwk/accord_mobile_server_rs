@@ -52,6 +52,47 @@ pub async fn capabilities(
     Ok(json_response(capability_catalog_entries()))
 }
 
+pub async fn roles(
+    State(state): State<AppState>,
+    method: Method,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, AdminError> {
+    let principal = authorize_any_capability(
+        &state,
+        &headers,
+        &[
+            Capability::RoleCapabilityRead,
+            Capability::RoleCapabilityManage,
+        ],
+    )
+    .await?;
+    if !matches!(method, Method::GET | Method::PUT) {
+        return Err(method_not_allowed());
+    }
+    match method {
+        Method::GET => {
+            require_capability(&principal, Capability::RoleCapabilityRead)?;
+            state
+                .admin
+                .role_definitions()
+                .await
+                .map(json_response)
+                .map_err(|_| server_error("admin roles fetch failed"))
+        }
+        Method::PUT => {
+            require_capability(&principal, Capability::RoleCapabilityManage)?;
+            let input: RoleDefinitionUpsert = parse_json(&body)?;
+            match state.admin.upsert_role_definition(input).await {
+                Ok(role) => Ok(json_response(role)),
+                Err(AdminPortError::InvalidInput(message)) => Err(bad_request(message)),
+                Err(_) => Err(server_error("admin role save failed")),
+            }
+        }
+        _ => Err(method_not_allowed()),
+    }
+}
+
 pub(super) async fn authorize_capability(
     state: &AppState,
     headers: &HeaderMap,

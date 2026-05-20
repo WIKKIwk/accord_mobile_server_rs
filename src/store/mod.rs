@@ -6,3 +6,4 @@ pub mod profile_store;
 pub mod push_token_store;
 #[cfg(test)]
 mod push_token_store_tests;
+pub mod role_store;

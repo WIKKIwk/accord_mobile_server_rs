@@ -24,6 +24,7 @@ use crate::rps::RpsDriverClient;
 use crate::store::admin_state_store::AdminSupplierStateBackend;
 use crate::store::profile_store::{LmdbProfileStore, ProfileStore};
 use crate::store::push_token_store::{LmdbPushTokenStore, PushTokenStore};
+use crate::store::role_store::RoleDefinitionStore;
 use tokio::time::sleep;
 
 #[derive(Clone)]
@@ -46,6 +47,7 @@ impl AppState {
         let mut auth = AuthService::new(&config);
         let mut admin =
             AdminService::new(&config).with_env_persister(Arc::new(DotEnvPersister::new(".env")));
+        admin = admin.with_role_store(Arc::new(RoleDefinitionStore::new(role_store_path())));
         admin = admin.with_auth_config_sink(Arc::new(auth.clone()));
         let mut customer = CustomerService::new();
         let profile_store = build_profile_store(&config);
@@ -467,6 +469,12 @@ fn build_rps_batch_store() -> RpsBatchLmdbStore {
         }
         Err(error) => panic!("LMDB RPS batch store unavailable: {error}"),
     }
+}
+
+fn role_store_path() -> std::path::PathBuf {
+    std::env::var("MOBILE_API_ROLE_STORE_PATH")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("data/mobile_roles.json"))
 }
 
 fn rps_batch_lmdb_path() -> std::path::PathBuf {

@@ -1,4 +1,9 @@
+use std::collections::{BTreeMap, BTreeSet};
+
+use async_trait::async_trait;
+use serde::Deserialize;
 use serde::Serialize;
+use tokio::sync::RwLock;
 
 use crate::core::auth::models::{Principal, PrincipalRole};
 
@@ -6,6 +11,7 @@ use crate::core::auth::models::{Principal, PrincipalRole};
 pub enum Capability {
     AdminAccess,
     RoleCapabilityRead,
+    RoleCapabilityManage,
     AdminSettingsRead,
     AdminSettingsManage,
     WerkaAccess,
@@ -48,6 +54,81 @@ pub struct CapabilityCatalogEntry {
     pub default_roles: Vec<PrincipalRole>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoleDefinition {
+    pub id: String,
+    pub label: String,
+    pub base_role: PrincipalRole,
+    pub capability_codes: Vec<String>,
+    pub system: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct RoleDefinitionUpsert {
+    pub id: String,
+    pub label: String,
+    pub base_role: PrincipalRole,
+    pub capability_codes: Vec<String>,
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum RoleDefinitionError {
+    #[error("role id is required")]
+    MissingId,
+    #[error("role label is required")]
+    MissingLabel,
+    #[error("role id is reserved")]
+    ReservedId,
+    #[error("role id is invalid")]
+    InvalidId,
+    #[error("role needs at least one capability")]
+    MissingCapabilities,
+    #[error("unknown capability: {0}")]
+    UnknownCapability(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum RoleStoreError {
+    #[error("role store failed")]
+    StoreFailed,
+}
+
+#[async_trait]
+pub trait RoleDefinitionStorePort: Send + Sync {
+    async fn role_definitions(&self) -> Result<Vec<RoleDefinition>, RoleStoreError>;
+    async fn put_role_definition(&self, role: RoleDefinition) -> Result<(), RoleStoreError>;
+}
+
+pub struct MemoryRoleDefinitionStore {
+    roles: RwLock<BTreeMap<String, RoleDefinition>>,
+}
+
+impl MemoryRoleDefinitionStore {
+    pub fn new() -> Self {
+        Self {
+            roles: RwLock::new(BTreeMap::new()),
+        }
+    }
+}
+
+impl Default for MemoryRoleDefinitionStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl RoleDefinitionStorePort for MemoryRoleDefinitionStore {
+    async fn role_definitions(&self) -> Result<Vec<RoleDefinition>, RoleStoreError> {
+        Ok(self.roles.read().await.values().cloned().collect())
+    }
+
+    async fn put_role_definition(&self, role: RoleDefinition) -> Result<(), RoleStoreError> {
+        self.roles.write().await.insert(role.id.clone(), role);
+        Ok(())
+    }
+}
+
 const ADMIN_ONLY: &[PrincipalRole] = &[PrincipalRole::Admin];
 const WERKA_ONLY: &[PrincipalRole] = &[PrincipalRole::Werka];
 const SUPPLIER_ONLY: &[PrincipalRole] = &[PrincipalRole::Supplier];
@@ -66,6 +147,12 @@ const CAPABILITY_CATALOG: &[CapabilityDefinition] = &[
         capability: Capability::RoleCapabilityRead,
         code: "role.capability.read",
         label: "Role capability catalog read",
+        default_roles: ADMIN_ONLY,
+    },
+    CapabilityDefinition {
+        capability: Capability::RoleCapabilityManage,
+        code: "role.capability.manage",
+        label: "Role capability manage",
         default_roles: ADMIN_ONLY,
     },
     CapabilityDefinition {
@@ -242,11 +329,89 @@ pub fn capability_by_code(code: &str) -> Option<&'static CapabilityDefinition> {
         .find(|definition| definition.code == code)
 }
 
+pub fn system_role_definitions() -> Vec<RoleDefinition> {
+    [
+        (PrincipalRole::Admin, "admin", "Admin"),
+        (PrincipalRole::Werka, "werka", "Werka"),
+        (PrincipalRole::Supplier, "supplier", "Supplier"),
+        (PrincipalRole::Customer, "customer", "Customer"),
+    ]
+    .into_iter()
+    .map(|(role, id, label)| RoleDefinition {
+        id: id.to_string(),
+        label: label.to_string(),
+        capability_codes: capability_codes_for_role(role.clone()),
+        base_role: role,
+        system: true,
+    })
+    .collect()
+}
+
+pub fn normalize_custom_role(
+    input: RoleDefinitionUpsert,
+) -> Result<RoleDefinition, RoleDefinitionError> {
+    let id = input.id.trim().to_ascii_lowercase();
+    if id.is_empty() {
+        return Err(RoleDefinitionError::MissingId);
+    }
+    if system_role_ids().contains(id.as_str()) {
+        return Err(RoleDefinitionError::ReservedId);
+    }
+    if !id
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+    {
+        return Err(RoleDefinitionError::InvalidId);
+    }
+
+    let label = input.label.trim().to_string();
+    if label.is_empty() {
+        return Err(RoleDefinitionError::MissingLabel);
+    }
+
+    let requested: BTreeSet<String> = input
+        .capability_codes
+        .into_iter()
+        .map(|code| code.trim().to_string())
+        .filter(|code| !code.is_empty())
+        .collect();
+    if requested.is_empty() {
+        return Err(RoleDefinitionError::MissingCapabilities);
+    }
+    for code in &requested {
+        if capability_by_code(code).is_none() {
+            return Err(RoleDefinitionError::UnknownCapability(code.clone()));
+        }
+    }
+
+    let capability_codes = capability_catalog()
+        .iter()
+        .filter(|definition| requested.contains(definition.code))
+        .map(|definition| definition.code.to_string())
+        .collect();
+
+    Ok(RoleDefinition {
+        id,
+        label,
+        base_role: input.base_role,
+        capability_codes,
+        system: false,
+    })
+}
+
 pub fn capabilities_for_role(role: PrincipalRole) -> Vec<Capability> {
     capability_catalog()
         .iter()
         .filter(|definition| definition.default_roles.contains(&role))
         .map(|definition| definition.capability)
+        .collect()
+}
+
+pub fn capability_codes_for_role(role: PrincipalRole) -> Vec<String> {
+    capability_catalog()
+        .iter()
+        .filter(|definition| definition.default_roles.contains(&role))
+        .map(|definition| definition.code.to_string())
         .collect()
 }
 
@@ -256,6 +421,12 @@ pub fn has_capability(principal: &Principal, capability: Capability) -> bool {
         .find(|definition| definition.capability == capability)
         .map(|definition| definition.default_roles.contains(&principal.role))
         .unwrap_or(false)
+}
+
+fn system_role_ids() -> BTreeSet<&'static str> {
+    ["admin", "werka", "supplier", "customer"]
+        .into_iter()
+        .collect()
 }
 
 #[cfg(test)]
@@ -351,6 +522,7 @@ mod tests {
 
         for capability in [
             Capability::RoleCapabilityRead,
+            Capability::RoleCapabilityManage,
             Capability::AdminSettingsRead,
             Capability::AdminSettingsManage,
             Capability::CatalogItemRead,
@@ -380,6 +552,33 @@ mod tests {
             capability_by_code("party.supplier.item.assign").map(|item| item.capability),
             Some(Capability::SupplierItemAssign)
         );
+    }
+
+    #[test]
+    fn custom_role_definition_normalizes_ids_and_capabilities() {
+        let role = normalize_custom_role(RoleDefinitionUpsert {
+            id: " Scale_Operator ".to_string(),
+            label: " Scale operator ".to_string(),
+            base_role: PrincipalRole::Werka,
+            capability_codes: vec![
+                "gscale.print".to_string(),
+                "gscale.catalog.read".to_string(),
+                "gscale.print".to_string(),
+            ],
+        })
+        .expect("role");
+
+        assert_eq!(role.id, "scale_operator");
+        assert_eq!(role.label, "Scale operator");
+        assert_eq!(role.base_role, PrincipalRole::Werka);
+        assert_eq!(
+            role.capability_codes,
+            vec![
+                "gscale.catalog.read".to_string(),
+                "gscale.print".to_string()
+            ]
+        );
+        assert!(!role.system);
     }
 
     fn principal(role: PrincipalRole) -> Principal {

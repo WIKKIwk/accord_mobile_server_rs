@@ -20,6 +20,10 @@ use crate::core::admin::ports::{
 };
 use crate::core::auth::access_codes::{SupplierAccessInput, supplier_access_code};
 use crate::core::auth::service::normalize_phone;
+use crate::core::authz::{
+    MemoryRoleDefinitionStore, RoleDefinition, RoleDefinitionStorePort, RoleDefinitionUpsert,
+    normalize_custom_role, system_role_definitions,
+};
 use crate::core::werka::models::{CustomerDirectoryEntry, SupplierItem};
 
 const CODE_REGEN_WINDOW_SECONDS: i64 = 60;
@@ -35,6 +39,7 @@ pub struct AdminService {
     env_persister: Option<Arc<dyn AdminEnvPersister>>,
     erp_config_sink: Option<Arc<dyn AdminErpConfigSink>>,
     auth_config_sink: Option<Arc<dyn AdminAuthConfigSink>>,
+    role_store: Arc<dyn RoleDefinitionStorePort>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,6 +86,7 @@ impl AdminService {
             env_persister: None,
             erp_config_sink: None,
             auth_config_sink: None,
+            role_store: Arc::new(MemoryRoleDefinitionStore::new()),
         }
     }
 
@@ -117,6 +123,41 @@ impl AdminService {
     pub fn with_auth_config_sink(mut self, auth_config_sink: Arc<dyn AdminAuthConfigSink>) -> Self {
         self.auth_config_sink = Some(auth_config_sink);
         self
+    }
+
+    pub fn with_role_store(mut self, role_store: Arc<dyn RoleDefinitionStorePort>) -> Self {
+        self.role_store = role_store;
+        self
+    }
+
+    pub async fn role_definitions(&self) -> Result<Vec<RoleDefinition>, AdminPortError> {
+        let mut roles = system_role_definitions();
+        roles.extend(
+            self.role_store
+                .role_definitions()
+                .await
+                .map_err(|_| AdminPortError::LookupFailed)?,
+        );
+        roles.sort_by(|left, right| {
+            left.system
+                .cmp(&right.system)
+                .reverse()
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        Ok(roles)
+    }
+
+    pub async fn upsert_role_definition(
+        &self,
+        input: RoleDefinitionUpsert,
+    ) -> Result<RoleDefinition, AdminPortError> {
+        let role = normalize_custom_role(input)
+            .map_err(|error| AdminPortError::InvalidInput(error.to_string()))?;
+        self.role_store
+            .put_role_definition(role.clone())
+            .await
+            .map_err(|_| AdminPortError::LookupFailed)?;
+        Ok(role)
     }
 
     pub async fn settings(&self) -> Result<AdminSettings, AdminPortError> {
